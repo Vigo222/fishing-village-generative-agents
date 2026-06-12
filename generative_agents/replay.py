@@ -64,7 +64,7 @@ def index():
 
     return render_template(
         "index.html",
-        persona_names=personas,
+        persona_names=persona_names,
         step=step,
         play_speed=speed,
         zoom=zoom,
