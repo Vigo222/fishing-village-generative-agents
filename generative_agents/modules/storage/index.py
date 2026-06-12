@@ -26,10 +26,12 @@ class LlamaIndex:
                 ollama_additional_kwargs={"mirostat": 0},
             )
         elif embedding_config["provider"] == "openai":
+            from modules.model.llm_model import resolve_env
+
             embed_model = OpenAIEmbedding(
                 model_name=embedding_config["model"],
-                api_base=embedding_config["base_url"],
-                api_key=embedding_config["api_key"],
+                api_base=resolve_env(embedding_config["base_url"]),
+                api_key=resolve_env(embedding_config["api_key"]),
             )
         else:
             raise NotImplementedError(

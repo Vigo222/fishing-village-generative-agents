@@ -1,15 +1,23 @@
 """generative_agents.model.llm_model"""
 
+import os
 import time
 import re
 import requests
 from magentic import prompt
 
 
+def resolve_env(value):
+    """配置值形如 ${VAR} 时从环境变量解析(API key 不入 git/存档)"""
+    if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
+        return os.environ.get(value[2:-1], "")
+    return value
+
+
 class LLMModel:
     def __init__(self, config):
-        self._api_key = config["api_key"]
-        self._base_url = config["base_url"]
+        self._api_key = resolve_env(config["api_key"])
+        self._base_url = resolve_env(config["base_url"])
         self._model = config["model"]
         self._summary = {"total": [0, 0, 0]}
 

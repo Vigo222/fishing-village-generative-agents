@@ -16,6 +16,7 @@
 
 	// Persona related variables
 	let persona_names = {{ persona_init_pos|tojson }};
+	let appear_frame = {{ appear_frame|tojson }};  // 热注入:每个Agent的现身帧(缺省按第1帧)
 	var spawn_tile_loc = {};
 	for (var key in persona_names) {
 		spawn_tile_loc[key] = persona_names[key];
@@ -229,6 +230,12 @@
 				}
 			).setDepth(3);
 			pronunciatios[persona_name].alpha = 0.7;
+
+			// 热注入:现身帧晚于回放起始帧的Agent先隐藏,待其首条movement数据出现时现身
+			if ((appear_frame[persona_name] || 1) > step) {
+				new_sprite.setVisible(false);
+				pronunciatios[persona_name].setVisible(false);
+			}
 		}
 
 		// Create animations
@@ -349,6 +356,11 @@
 
 			if (step in all_movement) {
 				if (curr_persona_name.replace("_", " ") in all_movement[step]) {
+					// 热注入:首条movement数据出现即现身
+					if (!curr_persona.visible) {
+						curr_persona.setVisible(true);
+						curr_pronunciatio.setVisible(true);
+					}
 					if (execute_count == execute_count_max) {
 						let curr_x = all_movement[step][curr_persona_name.replace("_", " ")]["movement"][0];
 						let curr_y = all_movement[step][curr_persona_name.replace("_", " ")]["movement"][1];

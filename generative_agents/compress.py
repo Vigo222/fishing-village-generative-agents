@@ -4,12 +4,23 @@ import argparse
 from datetime import datetime
 
 from modules.maze import Maze
-from start import personas
 
 file_markdown = "simulation.md"
 file_movement = "movement.json"
 
 frames_per_step = 60  # 每个step包含的帧数
+
+
+# 预扫描所有存档:收集 agent 名单与各自首次出现的 step(支持热注入的中途加入者)
+def scan_agents(json_files):
+    first_seen = {}
+    for file_name in json_files:
+        with open(file_name, "r", encoding="utf-8") as f:
+            json_data = json.load(f)
+        for agent_name in json_data["agents"]:
+            if agent_name not in first_seen:
+                first_seen[agent_name] = json_data["step"]
+    return first_seen
 
 
 # 从存档文件中读取stride
@@ -35,8 +46,9 @@ def get_location(address):
     return location
 
 
-# 插入第0帧数据（Agent的初始状态）
-def insert_frame0(init_pos, movement, agent_name):
+# 插入Agent的首帧数据。step==1(开局居民):保持原版行为,初始位置取人设住址;
+# step>1(热注入的中途加入者):初始位置取注入时存档坐标,描述为"刚抵达"
+def insert_first_frame(init_pos, movement, agent_name, step=1, agent_data=None):
     key = "0"
     if key not in movement.keys():
         movement[key] = dict()
@@ -44,14 +56,22 @@ def insert_frame0(init_pos, movement, agent_name):
     json_path = f"frontend/static/assets/village/agents/{agent_name}/agent.json"
     with open(json_path, "r", encoding="utf-8") as f:
         json_data = json.load(f)
+
+    if step == 1:
         address = json_data["spatial"]["address"]["living_area"]
-    location = get_location(address)
-    coord = json_data["coord"]
+        location = get_location(address)
+        coord = json_data["coord"]
+        description = "正在睡觉"
+    else:
+        location = get_location(agent_data["action"]["event"]["address"])
+        coord = agent_data["coord"]
+        description = "刚抵达村子"
+
     init_pos[agent_name] = coord
     movement[key][agent_name] = {
         "location": location,
         "movement": coord,
-        "description": "正在睡觉",
+        "description": description,
     }
     movement["description"][agent_name] = {
         "currently": json_data["currently"],
@@ -83,11 +103,18 @@ def generate_movement(checkpoints_folder, compressed_folder, compressed_file):
     stride = get_stride(json_files)
     sec_per_step = stride
 
+    # 每个Agent首次出现的step与帧号(热注入回放兼容:前端在现身帧之前隐藏精灵)
+    first_seen = scan_agents(json_files)
+    appear_frame = {
+        name: (step - 1) * frames_per_step + 1 for name, step in first_seen.items()
+    }
+
     result = {
         "start_datetime": "",  # 起始时间
         "stride": stride,  # 每个step对应的分钟数（必须与生成时的参数一致）
         "sec_per_step": sec_per_step,  # 回放时每一帧对应的秒数
         "persona_init_pos": persona_init_pos,  # 每个Agent的初始位置
+        "appear_frame": appear_frame,  # 每个Agent的现身帧(开局居民为1,注入者为注入帧)
         "all_movement": all_movement,  # 所有Agent在每个setp中的位置变化
     }
 
@@ -113,9 +140,11 @@ def generate_movement(checkpoints_folder, compressed_folder, compressed_file):
 
             # 遍历单个存档文件中的所有Agent
             for agent_name, agent_data in agents.items():
-                # 插入第0帧
-                if step == 1:
-                    insert_frame0(persona_init_pos, all_movement, agent_name)
+                # 插入首帧(开局居民在step 1;热注入者在其首次出现的step)
+                if step == first_seen[agent_name]:
+                    insert_first_frame(
+                        persona_init_pos, all_movement, agent_name, step, agent_data
+                    )
 
                 source_coord = last_location.get(agent_name, all_movement["0"][agent_name])["movement"]
                 target_coord = agent_data["coord"]
@@ -200,13 +229,21 @@ def generate_report(checkpoints_folder, compressed_folder, compressed_file):
         with open(os.path.join(checkpoints_folder, conversation_file), "r", encoding="utf-8") as f:
             conversation = json.load(f)
 
+    json_files = list()
+    for file_name in sorted(os.listdir(checkpoints_folder)):
+        if file_name.endswith(".json") and file_name != conversation_file:
+            json_files.append(os.path.join(checkpoints_folder, file_name))
+    first_seen = scan_agents(json_files)
+
     def extract_description():
         markdown_content = "# 基础人设\n\n"
-        for agent_name in personas:
+        for agent_name, first_step in first_seen.items():
             json_path = f"frontend/static/assets/village/agents/{agent_name}/agent.json"
             with open(json_path, "r", encoding="utf-8") as f:
                 json_data = json.load(f)
                 markdown_content += f"## {agent_name}\n\n"
+                if first_step > 1:
+                    markdown_content += f"**（热注入：于 step {first_step} 加入小镇）**  \n"
                 markdown_content += f"年龄：{json_data['scratch']['age']}岁  \n"
                 markdown_content += f"先天：{json_data['scratch']['innate']}  \n"
                 markdown_content += f"后天：{json_data['scratch']['learned']}  \n"

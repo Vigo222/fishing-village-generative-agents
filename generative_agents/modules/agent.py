@@ -343,6 +343,9 @@ class Agent:
             event = self.make_event(self.name, thought, self.get_tile().get_address())
             return self._add_concept("thought", event, filling=evidence)
 
+        # 主实验开关:think.reflect=false 时屏蔽反思触发(对照组),其余机制不变
+        if not self.think_config.get("reflect", True):
+            return
         if self.status["poignancy"] < self.think_config["poignancy_max"]:
             return
         nodes = self.associate.retrieve_events() + self.associate.retrieve_thoughts()

@@ -21,20 +21,25 @@ class Game:
         self.conversation = conversation
         self.agents = {}
         if "agent_base" in config:
-            agent_base = config["agent_base"]
+            self.agent_base = config["agent_base"]
         else:
-            agent_base = {}
-        storage_root = os.path.join(f"results/checkpoints/{name}", "storage")
-        if not os.path.isdir(storage_root):
-            os.makedirs(storage_root)
-        for name, agent in config["agents"].items():
-            agent_config = utils.update_dict(
-                copy.deepcopy(agent_base), self.load_static(agent["config_path"])
-            )
-            agent_config = utils.update_dict(agent_config, agent)
+            self.agent_base = {}
+        self.storage_root = os.path.join(f"results/checkpoints/{name}", "storage")
+        if not os.path.isdir(self.storage_root):
+            os.makedirs(self.storage_root)
+        for a_name, agent in config["agents"].items():
+            self.add_agent(a_name, agent)
 
-            agent_config["storage_root"] = os.path.join(storage_root, name)
-            self.agents[name] = Agent(agent_config, self.maze, self.conversation, self.logger)
+    def add_agent(self, name, agent_entry):
+        """从 config["agents"] 条目创建 Agent 并注册(初始化与运行时热注入共用)"""
+        agent_config = utils.update_dict(
+            copy.deepcopy(self.agent_base), self.load_static(agent_entry["config_path"])
+        )
+        agent_config = utils.update_dict(agent_config, agent_entry)
+
+        agent_config["storage_root"] = os.path.join(self.storage_root, name)
+        self.agents[name] = Agent(agent_config, self.maze, self.conversation, self.logger)
+        return self.agents[name]
 
     def get_agent(self, name):
         return self.agents[name]

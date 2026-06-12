@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 from flask import Flask, render_template, request
 
 from compress import frames_per_step, file_movement
-from start import personas
 
 app = Flask(
     __name__,
@@ -33,6 +32,12 @@ def index():
     with open(replay_file, "r", encoding="utf-8") as f:
         params = json.load(f)
 
+    # 兼容无 appear_frame 字段的旧版回放数据:全部按第1帧现身
+    params.setdefault("appear_frame", {})
+
+    # 名单从回放数据自身得出(不再依赖 start.py 的硬编码列表,支持热注入者)
+    persona_names = list(params["persona_init_pos"].keys())
+
     if step < 1:
         step = 1
     if step > 1:
@@ -44,11 +49,12 @@ def index():
         if step >= len(params["all_movement"]):
             step = len(params["all_movement"])-1
 
-        # 重新设置Agent的初始位置
+        # 重新设置Agent的初始位置(注入者在该帧之前不存在,保持出生点并由前端隐藏)
         for agent in params["persona_init_pos"].keys():
             persona_init_pos = params["persona_init_pos"]
             persona_step_pos = params["all_movement"][f"{step}"]
-            persona_init_pos[agent] = persona_step_pos[agent]["movement"]
+            if agent in persona_step_pos:
+                persona_init_pos[agent] = persona_step_pos[agent]["movement"]
 
     if speed < 0:
         speed = 0
