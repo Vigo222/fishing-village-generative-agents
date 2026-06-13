@@ -24,6 +24,9 @@ class Concept:
         create=None,
         expire=None,
         access=None,
+        status="active",
+        conflict_with=None,
+        superseded_by=None,
     ):
         self.node_id = node_id
         self.node_type = node_type
@@ -31,6 +34,10 @@ class Concept:
             subject, predicate, object, describe=describe, address=address.split(":")
         )
         self.poignancy = poignancy
+        # 记忆整合标记(加性、可选、默认无害;旧节点无这些 metadata 键即走默认值)
+        self.status = status
+        self.conflict_with = conflict_with
+        self.superseded_by = superseded_by
         self.create = utils.to_date(create) if create else utils.get_timer().get_date()
         if expire:
             self.expire = utils.to_date(expire)
@@ -133,6 +140,9 @@ class Associate:
         relevance_weight=3,
         importance_weight=2,
         memory=None,
+        consolidate=None,
+        consolidation_log=None,
+        superseded=None,
     ):
         self._index = LlamaIndex(embedding, path)
         self.memory = memory or {"event": [], "thought": [], "chat": []}
@@ -140,6 +150,10 @@ class Associate:
         self.retention = retention
         self.max_memory = max_memory
         self.max_importance = max_importance
+        # 记忆整合(选题1)配置与日志;默认关闭,需 config 显式开启
+        self.consolidate_config = consolidate or {"enabled": False}
+        self.consolidation_log = consolidation_log or []
+        self.superseded = superseded or []  # UPDATE 过时记录 {old_id,new_id},审计用
         self._retrieve_config = {
             "recency_decay": recency_decay,
             "recency_weight": recency_weight,
@@ -171,6 +185,8 @@ class Associate:
         create=None,
         expire=None,
         filling=None,
+        status="active",
+        conflict_with=None,
     ):
         create = create or utils.get_timer().get_date()
         expire = expire or (create + datetime.timedelta(days=30))
@@ -184,7 +200,10 @@ class Associate:
             "create": create.strftime("%Y%m%d-%H:%M:%S"),
             "expire": expire.strftime("%Y%m%d-%H:%M:%S"),
             "access": create.strftime("%Y%m%d-%H:%M:%S"),
+            "status": status,
         }
+        if conflict_with:
+            metadata["conflict_with"] = conflict_with
         node = self._index.add_node(event.get_describe(), metadata)
         memory = self.memory[node_type]
         memory.insert(0, node.id_)
@@ -192,6 +211,49 @@ class Associate:
             self._index.remove_nodes(memory[self.max_memory:])
             self.memory[node_type] = memory[: self.max_memory - 1]
         return self.to_concept(node)
+
+    # ------------------------------------------------------------------
+    # 记忆整合(选题1):候选召回 + 软过时 + 冲突标注 + 日志(均无 LLM)
+    # ------------------------------------------------------------------
+
+    def consolidate_candidates(self, event, node_type, top_k=4, threshold=0.6):
+        """对新记忆做向量检索,返回近期同类、相似度≥阈值的候选(纯相似度,不经三因子重排)"""
+        ids = self.memory.get(node_type, [])
+        if not ids:
+            return []
+        filters = MetadataFilters(
+            filters=[ExactMatchFilter(key="node_type", value=node_type)]
+        )
+        nodes = self._index.retrieve(
+            event.get_describe(), similarity_top_k=top_k, filters=filters, node_ids=ids
+        )
+        out = []
+        for n in nodes:
+            score = getattr(n, "score", None)
+            if score is not None and score >= threshold:
+                out.append(self.to_concept(n))
+        return out
+
+    def supersede(self, old_id, new_id):
+        """UPDATE:把旧节点移出检索候选列表(不动三因子公式),即不再被任何检索召回。
+        注:llama-index docstore 的 node.metadata 原地修改不回写,故"过时"不靠 in-node
+        标记,而靠①移出候选 ②consolidation_log 记录(含 old_id/new_id)做审计/副实验。
+        旧节点实体仍留在 docstore(可经 node_id 回查),但不再进入任何候选集合。"""
+        self.superseded.append({"old_id": old_id, "new_id": new_id})
+        for ids in self.memory.values():
+            if old_id in ids:
+                ids.remove(old_id)
+
+    def log_consolidation(self, action, new_concept, old_concept=None, reason=""):
+        self.consolidation_log.append({
+            "time": utils.get_timer().get_date("%Y%m%d-%H:%M:%S"),
+            "action": action,
+            "new": new_concept.describe if new_concept else "",
+            "new_id": new_concept.node_id if new_concept else "",
+            "old": old_concept.describe if old_concept else "",
+            "old_id": old_concept.node_id if old_concept else "",
+            "reason": reason,
+        })
 
     def to_concept(self, node):
         return Concept.from_node(node)
@@ -255,7 +317,11 @@ class Associate:
 
     def to_dict(self):
         self._index.save()
-        return {"memory": self.memory}
+        return {
+            "memory": self.memory,
+            "consolidation_log": self.consolidation_log,
+            "superseded": self.superseded,
+        }
 
     @property
     def index(self):

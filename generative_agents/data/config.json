@@ -34,7 +34,13 @@
                 "base_url": "https://api.siliconflow.cn/v1",
                 "api_key": "${OPENAI_API_KEY}"
             },
-            "retention": 8
+            "retention": 8,
+            "consolidate": {
+                "enabled": true,
+                "scope": ["event"],
+                "sim_threshold": 0.6,
+                "max_candidates": 4
+            }
         }
     }
 }

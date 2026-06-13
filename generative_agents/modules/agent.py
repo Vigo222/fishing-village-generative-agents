@@ -19,6 +19,7 @@ FAST_CALLERS = {
     "decide_chat_terminate",    # 对话是否终止 (bool)
     "generate_chat_check_repeat",  # 对话查重 (bool)
     "decide_wait",              # 是否等待 (str A/B)
+    "memory_consolidate",       # 记忆整合判定 (List[str],机械活)
 }
 
 
@@ -674,6 +675,14 @@ class Agent:
         else:
             poignancy = self.completion("poignancy_event", event)
         self.logger.debug("{} add associate {}".format(self.name, event))
+
+        # 记忆整合(选题1):仅对配置范围内的类型(默认 event,绝不碰 thought)
+        cfg = self.associate.consolidate_config
+        if cfg.get("enabled") and e_type in cfg.get("scope", ["event"]):
+            consolidated = self._consolidate_memory(e_type, event, poignancy, create, expire, filling)
+            if consolidated is not None:
+                return consolidated
+
         return self.associate.add_node(
             e_type,
             event,
@@ -682,6 +691,50 @@ class Agent:
             expire=expire,
             filling=filling,
         )
+
+    def _consolidate_memory(self, e_type, event, poignancy, create, expire, filling):
+        """整合判定与执行。返回 Concept(已处理)或 None(无候选→交回常规 ADD)"""
+        cfg = self.associate.consolidate_config
+        candidates = self.associate.consolidate_candidates(
+            event, e_type,
+            top_k=cfg.get("max_candidates", 4),
+            threshold=cfg.get("sim_threshold", 0.6),
+        )
+        if not candidates:
+            return None  # 无相似候选,不调 LLM,走常规 ADD(控成本)
+
+        verdict = self.completion("memory_consolidate", event, candidates)
+        action = str(verdict[0]).strip().upper()
+        try:
+            target = int(verdict[1])
+        except (ValueError, IndexError):
+            target = -1
+        reason = verdict[2] if len(verdict) > 2 else ""
+        old = candidates[target] if 0 <= target < len(candidates) else None
+
+        if action == "NOOP" and old is not None:
+            self.associate.log_consolidation("NOOP", old, old, reason)
+            self.logger.info("{} 记忆整合 NOOP(去重): {}".format(self.name, event.get_describe()))
+            return old  # 去重:不新增,返回命中的旧记忆
+
+        node = self.associate.add_node(
+            e_type, event, poignancy, create=create, expire=expire, filling=filling,
+            conflict_with=old.node_id if (action == "CONFLICT" and old) else None,
+        )
+        if action == "UPDATE" and old is not None:
+            self.associate.supersede(old.node_id, node.node_id)
+            self.associate.log_consolidation("UPDATE", node, old, reason)
+            self.logger.info("{} 记忆整合 UPDATE: '{}' 过时 → '{}'".format(
+                self.name, old.describe, node.describe))
+        elif action == "CONFLICT" and old is not None:
+            # 新节点已在 add_node 时写入 conflict_with=old.node_id(创建即持久);
+            # 反向标记靠 consolidation_log 记录冲突对(docstore 原地改 metadata 不可靠)
+            self.associate.log_consolidation("CONFLICT", node, old, reason)
+            self.logger.info("{} 记忆整合 CONFLICT: '{}' ⚔ '{}'".format(
+                self.name, old.describe, node.describe))
+        else:
+            self.associate.log_consolidation("ADD", node, None, reason)
+        return node
 
     def get_tile(self):
         return self.maze.tile_at(self.coord)

@@ -72,6 +72,31 @@ class Scratch:
 
         return Result(prompt, None, random.choice(list(range(10))) + 1, PoignancyChatResponse)
 
+    def prompt_memory_consolidate(self, event, candidates):
+        prompt = self.build_prompt(
+            "memory_consolidate",
+            {
+                "base_desc": self._base_desc(),
+                "agent": self.name,
+                "new_memory": event.get_describe(),
+                "candidates": "\n".join(
+                    ["{}. {}".format(idx, c.describe) for idx, c in enumerate(candidates)]
+                ),
+            }
+        )
+
+        class memory_consolidateResponse(BaseModel):
+            res: List[str] = Field(description="长度3的数组：[判定(ADD/UPDATE/CONFLICT/NOOP), target序号字符串, 一句话理由]")
+
+        def _callback(response):
+            assert len(response) >= 2, "memory_consolidate: bad shape"
+            action = str(response[0]).strip().upper()
+            assert action in ("ADD", "UPDATE", "CONFLICT", "NOOP"), "unknown action"
+            return response
+
+        # failsafe:出错一律按 ADD 处理(宁可多记,不错删)
+        return Result(prompt, _callback, ["ADD", "-1", "failsafe"], memory_consolidateResponse)
+
     def prompt_wake_up(self):
         prompt = self.build_prompt(
             "wake_up",
