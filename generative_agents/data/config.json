@@ -37,7 +37,7 @@
             "retention": 8,
             "consolidate": {
                 "enabled": true,
-                "scope": ["event"],
+                "scope": ["event", "chat"],
                 "sim_threshold": 0.6,
                 "max_candidates": 4
             }

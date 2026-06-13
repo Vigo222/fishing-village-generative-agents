@@ -166,3 +166,6 @@ cython_debug/
 
 .claude/
 checkpoints/
+
+# 实验运行产物(渔村跑批,勿入库)
+results/compressed/fv-*

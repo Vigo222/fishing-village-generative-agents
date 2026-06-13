@@ -676,9 +676,14 @@ class Agent:
             poignancy = self.completion("poignancy_event", event)
         self.logger.debug("{} add associate {}".format(self.name, event))
 
-        # 记忆整合(选题1):仅对配置范围内的类型(默认 event,绝不碰 thought)
+        # 记忆整合(选题1):仅对配置范围内的类型(event/chat,绝不碰 thought)
         cfg = self.associate.consolidate_config
-        if cfg.get("enabled") and e_type in cfg.get("scope", ["event"]):
+        # 物件状态事件(subject 即该 tile 上的对象,如"烹饪区/烧水炉/渔船泊位")是环境噪声,
+        # 不参与整合——只整合"人物/实体"相关记忆,避免物件状态churn与误判冲突
+        is_object_event = (
+            e_type == "event" and event.address and event.subject == event.address[-1]
+        )
+        if cfg.get("enabled") and e_type in cfg.get("scope", ["event"]) and not is_object_event:
             consolidated = self._consolidate_memory(e_type, event, poignancy, create, expire, filling)
             if consolidated is not None:
                 return consolidated
@@ -722,10 +727,13 @@ class Agent:
             conflict_with=old.node_id if (action == "CONFLICT" and old) else None,
         )
         if action == "UPDATE" and old is not None:
-            self.associate.supersede(old.node_id, node.node_id)
+            # event:旧记忆过时、移出候选;chat:不 supersede(保护对话系统读的
+            # retrieve_chats / 60分钟搭话冷却),两条并存,仅靠 consolidation_log 记录更新
+            if e_type == "event":
+                self.associate.supersede(old.node_id, node.node_id)
             self.associate.log_consolidation("UPDATE", node, old, reason)
-            self.logger.info("{} 记忆整合 UPDATE: '{}' 过时 → '{}'".format(
-                self.name, old.describe, node.describe))
+            self.logger.info("{} 记忆整合 UPDATE({}): '{}' → '{}'".format(
+                self.name, e_type, old.describe, node.describe))
         elif action == "CONFLICT" and old is not None:
             # 新节点已在 add_node 时写入 conflict_with=old.node_id(创建即持久);
             # 反向标记靠 consolidation_log 记录冲突对(docstore 原地改 metadata 不可靠)
