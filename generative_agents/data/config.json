@@ -11,15 +11,15 @@
         },
         "think": {
             "llm": {
-                "provider": "openai",
-                "model": "deepseek-v4-pro",
-                "base_url": "https://yunwu.ai/v1",
+                "provider": "openai_json",
+                "model": "deepseek-ai/DeepSeek-V4-Pro",
+                "base_url": "https://api.siliconflow.cn/v1",
                 "api_key": "${OPENAI_API_KEY}"
             },
             "llm_fast": {
                 "provider": "openai_json",
-                "model": "deepseek-v4-flash",
-                "base_url": "https://yunwu.ai/v1",
+                "model": "deepseek-ai/DeepSeek-V4-Flash",
+                "base_url": "https://api.siliconflow.cn/v1",
                 "api_key": "${OPENAI_API_KEY}"
             },
             "interval": 1000,
@@ -30,8 +30,8 @@
         "associate": {
             "embedding": {
                 "provider": "openai",
-                "model": "text-embedding-3-large",
-                "base_url": "https://yunwu.ai/v1",
+                "model": "BAAI/bge-m3",
+                "base_url": "https://api.siliconflow.cn/v1",
                 "api_key": "${OPENAI_API_KEY}"
             },
             "retention": 8

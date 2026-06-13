@@ -41,7 +41,7 @@ class LLMModel:
     ):
         response = None
         self._summary.setdefault(caller, [0, 0, 0])
-        for _ in range(retry):
+        for attempt in range(retry):
             try:
                 output = self._completion(prompt, return_type, **kwargs)
                 self._summary["total"][0] += 1
@@ -51,8 +51,16 @@ class LLMModel:
                 else:
                     response = output
             except Exception as e:
-                print(f"LLMModel.completion() caused an error: {e}")
-                time.sleep(5)
+                msg = str(e)
+                # 限流类错误(RPM/上游饱和/余额抖动)用更长的指数退避以等过限流窗口;
+                # 其余错误用较短退避。退避上限 60s。
+                rate_limited = any(
+                    k in msg for k in ("429", "rate", "rpm", "cooldown", "负载", "402", "Insufficient")
+                )
+                base = 10 if rate_limited else 3
+                backoff = min(base * (2 ** attempt), 60)
+                print(f"LLMModel.completion() caused an error: {e} | 退避 {backoff}s 后重试({attempt + 1}/{retry})")
+                time.sleep(backoff)
                 response = None
                 continue
             if response is not None:
@@ -271,8 +279,22 @@ class OpenAIJSONModel(LLMModel):
         except json.JSONDecodeError:
             match = re.search(r"\{.*\}", ret, re.DOTALL)
             if match:
-                return _validate(match.group())  # 仍失败则抛出,由外层 retry/ failsafe 兜底
+                try:
+                    return _validate(match.group())
+                except Exception:
+                    pass
+            # str 类型的 res:对话/摘要等自由文本常含未转义引号/换行导致 JSON 解析失败,
+            # 直接把清洗后的原始文本作为 res 兜底(避免无谓重试与 failsafe 降级)
+            if self._res_is_str(return_type):
+                return return_type.model_validate({"res": ret}).res
             raise
+
+    @staticmethod
+    def _res_is_str(return_type):
+        try:
+            return return_type.model_json_schema()["properties"]["res"].get("type") == "string"
+        except Exception:
+            return False
 
 
 def create_llm_model(llm_config):
