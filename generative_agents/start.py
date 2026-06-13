@@ -76,6 +76,10 @@ class SimulateServer:
         for agent_name, agent in config["agents"].items():
             agent_config = copy.deepcopy(agent_base)
             agent_config.update(self.load_static(agent["config_path"]))
+            # 叠加存档条目:resume 时 config["agents"][name] 含已保存 coord,
+            # 必须覆盖 agent.json 的初始 coord,否则全员被传送回出生点(位置漂移)。
+            # fresh 跑时该条目仅含 config_path,coord 保持初始,无影响。
+            agent_config.update(agent)
             self.agent_status[agent_name] = {
                 "coord": agent_config["coord"],
                 "path": [],
@@ -299,6 +303,7 @@ parser.add_argument("--verbose", type=str, default="debug", help="The verbose le
 parser.add_argument("--log", type=str, default="", help="Name of the log file")
 parser.add_argument("--agents", type=str, default="", help="Override personas, e.g. '伊莎贝拉,克劳斯' (test only)")
 parser.add_argument("--inject", type=str, default="", help="Hot-injection plan, e.g. '用户分身@12' or 'A@3,B@5'")
+parser.add_argument("--reflect", type=str, default="", choices=["", "on", "off"], help="Override reflection switch (main experiment variable); empty=use config")
 args = parser.parse_args()
 
 
@@ -333,6 +338,10 @@ if __name__ == "__main__":
         start_step = 0
 
     inject_plan = parse_inject_plan(args.inject) if args.inject else {}
+
+    # 主实验变量:--reflect on/off 覆盖 config 的 think.reflect(对照组屏蔽反思)
+    if args.reflect:
+        sim_config.setdefault("agent_base", {}).setdefault("think", {})["reflect"] = (args.reflect == "on")
 
     static_root = "frontend/static"
 

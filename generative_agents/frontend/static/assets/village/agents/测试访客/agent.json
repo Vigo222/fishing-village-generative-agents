@@ -2,8 +2,8 @@
   "name": "测试访客",
   "portrait": "assets/village/agents/测试访客/portrait.png",
   "coord": [
-    72,
-    14
+    74,
+    23
   ],
   "currently": "用户分身刚刚来到村子，是个陌生面孔。他想认识这里的居民，听听村子里的故事，看看这里的生活。",
   "scratch": {
