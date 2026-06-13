@@ -10,12 +10,25 @@ from modules.model.llm_model import create_llm_model
 from modules.memory.associate import Concept
 
 
+# 路由到快速档(deepseek-v4-flash)的机械调用:打分/查重/终止/等待判断
+# 均为标量 int/bool/str 返回,实测纯文本+宽松解析 8/8;可经 think.fast_callers 覆盖
+FAST_CALLERS = {
+    "poignancy_event",          # 事件重要性打分 (int)
+    "poignancy_chat",           # 对话重要性打分 (int)
+    "decide_chat",              # 是否发起对话 (bool)
+    "decide_chat_terminate",    # 对话是否终止 (bool)
+    "generate_chat_check_repeat",  # 对话查重 (bool)
+    "decide_wait",              # 是否等待 (str A/B)
+}
+
+
 class Agent:
     def __init__(self, config, maze, conversation, logger):
         self.name = config["name"]
         self.maze = maze
         self.conversation = conversation
         self._llm = None
+        self._llm_fast = None
         self.logger = logger
 
         # agent config
@@ -75,7 +88,7 @@ class Agent:
         if self.schedule.scheduled():
             des["schedule"] = self.schedule.abstract()
         if self.llm_available():
-            des["llm"] = self._llm.get_summary()
+            des["llm"] = self.llm_summary()
         # if self.plan.get("path"):
         #     des["path"] = "-".join(
         #         ["{},{}".format(c[0], c[1]) for c in self.plan["path"]]
@@ -88,6 +101,16 @@ class Agent:
     def reset(self):
         if not self._llm:
             self._llm = create_llm_model(self.think_config["llm"])
+        # 快速档(机械调用路由目标);未配置 llm_fast 时退化为单模型(向后兼容)
+        if not self._llm_fast:
+            fast_config = self.think_config.get("llm_fast")
+            self._llm_fast = create_llm_model(fast_config) if fast_config else self._llm
+        self.fast_callers = set(self.think_config.get("fast_callers", FAST_CALLERS))
+
+    def _route_llm(self, func_hint):
+        if self._llm_fast is not None and func_hint in self.fast_callers:
+            return self._llm_fast
+        return self._llm
 
     def completion(self, func_hint, *args, **kwargs):
         assert hasattr(
@@ -95,10 +118,12 @@ class Agent:
         ), "Can not find func prompt_{} from scratch".format(func_hint)
         func = getattr(self.scratch, "prompt_" + func_hint)
         res = func(*args, **kwargs)._asdict()
+        llm = self._route_llm(func_hint)
         title, msg = "{}.{}".format(self.name, func_hint), {}
-        if self.llm_available():
-            self.logger.info("{} -> {}".format(self.name, func_hint))
-            output = self._llm.completion(**res)
+        output = res["failsafe"]
+        if llm and llm.is_available():
+            self.logger.info("{} -> {} ({})".format(self.name, func_hint, llm._model))
+            output = llm.completion(caller=func_hint, **res)
             msg = {"<PROMPT>": "\n" + res["prompt"] + "\n"}
             msg.update({"response": output})
         self.logger.debug(utils.block_msg(title, msg))
@@ -677,6 +702,13 @@ class Agent:
         if not self._llm:
             return False
         return self._llm.is_available()
+
+    def llm_summary(self):
+        # 合并旗舰与快速档的调用统计(快速档退化为同一实例时只报一份)
+        summary = {"flagship": self._llm.get_summary()}
+        if self._llm_fast is not None and self._llm_fast is not self._llm:
+            summary["fast"] = self._llm_fast.get_summary()
+        return summary
 
     def to_dict(self, with_action=True):
         info = {

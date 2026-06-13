@@ -104,6 +104,9 @@ class OllamaLLMModel(LLMModel):
         headers = {
             "Content-Type": "application/json"
         }
+        # 经 OpenAI 兼容中转(如云雾)时需带 Bearer 认证;本地 Ollama 无 key 时自动跳过
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
         params = {
             "model": self._model,
             "messages": messages,
@@ -175,16 +178,114 @@ class OllamaLLMModel(LLMModel):
         return ""
 
 
+class OpenAIJSONModel(LLMModel):
+    """OpenAI 兼容接口的纯文本+宽松JSON解析路径(快速档/国产模型自实现)。
+
+    用于 magentic 工具调用不兼容、且中转上游不稳定支持 response_format 的模型
+    (实测 deepseek-v4-flash:magentic 强制工具调用 2/6,response_format 随机报
+    'does not support';纯文本+宽松解析 8/8)。不发 tools、不发 response_format,
+    把期望的 {"res": ...} 形状以自然语言注入提示词,再从返回文本中宽松提取并用
+    Pydantic 校验。这正是阶段0裁决预案"按 JSON 方式自实现"的落地形态。
+    """
+
+    def setup(self, config):
+        return None
+
+    @staticmethod
+    def _shape_hint(schema):
+        t = schema.get("type")
+        if t == "integer":
+            return "整数"
+        if t == "number":
+            return "数字"
+        if t == "boolean":
+            return "true 或 false"
+        if t == "string":
+            return '"字符串"'
+        if t == "array":
+            if "prefixItems" in schema:  # 定长元组 Tuple[...]
+                return "[" + ", ".join(
+                    OpenAIJSONModel._shape_hint(it) for it in schema["prefixItems"]
+                ) + "]"
+            return "[" + OpenAIJSONModel._shape_hint(schema.get("items", {})) + ", ...]"
+        if t == "object":
+            return "{键: 值, ...}"
+        return "值"
+
+    def _format_hint(self, return_type):
+        try:
+            schema = return_type.model_json_schema()
+            res_schema = schema.get("properties", {}).get("res", {})
+            shape = self._shape_hint(res_schema)
+        except Exception:
+            shape = "值"
+        return (
+            '\n\n请严格只返回一个JSON对象,不要包含任何额外的解释、前后缀或代码块标记,'
+            '格式为: {{"res": {}}}'.format(shape)
+        )
+
+    def chat(self, messages, temperature):
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        params = {
+            "model": self._model,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": False,
+        }
+        response = requests.post(
+            url=f"{self._base_url}/chat/completions",
+            headers=headers,
+            json=params,
+            stream=False,
+            timeout=300,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(
+                "HTTP {}: {}".format(response.status_code, response.text[:200])
+            )
+        return response.json()
+
+    def _completion(self, prompt, return_type, temperature=0.5):
+        import json
+
+        full_prompt = prompt + (self._format_hint(return_type) if return_type else "")
+        response = self.chat([{"role": "user", "content": full_prompt}], temperature)
+        if not response.get("choices"):
+            raise RuntimeError("empty choices: {}".format(str(response)[:200]))
+
+        ret = response["choices"][0]["message"].get("content") or ""
+        # 去除推理标签与代码块围栏(deepseek-v4-flash 等推理模型)
+        ret = re.sub(r"<think>.*?</think>", "", ret, flags=re.DOTALL)
+        ret = re.sub(r"```(?:json)?|```", "", ret).strip()
+
+        def _validate(text):
+            parsed = json.loads(text)
+            return return_type.model_validate(parsed).res
+
+        if return_type is None:
+            return ret
+        try:
+            return _validate(ret)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", ret, re.DOTALL)
+            if match:
+                return _validate(match.group())  # 仍失败则抛出,由外层 retry/ failsafe 兜底
+            raise
+
+
 def create_llm_model(llm_config):
     """Create llm model"""
 
-    if llm_config["provider"] == "ollama":
+    provider = llm_config["provider"]
+    if provider == "ollama":
         return OllamaLLMModel(llm_config)
-
-    elif llm_config["provider"] == "openai":
+    elif provider == "openai":
         return OpenAILLMModel(llm_config)
+    elif provider == "openai_json":
+        return OpenAIJSONModel(llm_config)
     else:
         raise NotImplementedError(
-            "llm provider {} is not supported".format(llm_config["provider"])
+            "llm provider {} is not supported".format(provider)
         )
-    return None

@@ -67,7 +67,7 @@ class Game:
         else:
             info["record"] = False
         if agent.llm_available():
-            info["llm"] = agent._llm.get_summary()
+            info["llm"] = agent.llm_summary()
         title = "{}.summary @ {}".format(
             name, utils.get_timer().get_date("%Y%m%d-%H:%M:%S")
         )
