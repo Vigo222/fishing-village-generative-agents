@@ -14,13 +14,15 @@
                 "provider": "openai_json",
                 "model": "deepseek-ai/DeepSeek-V4-Pro",
                 "base_url": "https://api.siliconflow.cn/v1",
-                "api_key": "${OPENAI_API_KEY}"
+                "api_key": "${OPENAI_API_KEY}",
+                "temperature": 0.5
             },
             "llm_fast": {
                 "provider": "openai_json",
                 "model": "deepseek-ai/DeepSeek-V4-Flash",
                 "base_url": "https://api.siliconflow.cn/v1",
-                "api_key": "${OPENAI_API_KEY}"
+                "api_key": "${OPENAI_API_KEY}",
+                "temperature": 0.5
             },
             "interval": 1000,
             "poignancy_max": 50,

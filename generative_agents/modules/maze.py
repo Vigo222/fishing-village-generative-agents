@@ -207,4 +207,9 @@ class Maze:
         addr = ":".join(address)
         if addr in self.address_tiles:
             return self.address_tiles[addr]
-        return random.choice(self.address_tiles.values())
+        # 地址查无(人设/地图不一致,或 LLM 选了树外地址):回退随机一格而非崩溃。
+        # 原版 random.choice(dict.values()) 在 Python 3.14 会 TypeError,改用 list()。
+        # 加固跑批健壮性——一次寻址落空不应葬送整轮(尤其过夜批处理)。
+        if self.logger:
+            self.logger.warning("get_address_tiles: 地址未找到,随机回退: {}".format(addr))
+        return random.choice(list(self.address_tiles.values()))

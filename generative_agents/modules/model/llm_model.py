@@ -19,6 +19,8 @@ class LLMModel:
         self._api_key = resolve_env(config["api_key"])
         self._base_url = resolve_env(config["base_url"])
         self._model = config["model"]
+        # 采样温度:实验跑批=0(压低 LLM 随机、增强可复现),演示录制=0.5(腔调生动)
+        self._temperature = config.get("temperature", 0.5)
         self._summary = {"total": [0, 0, 0]}
 
         self._handle = self.setup(config)
@@ -255,9 +257,11 @@ class OpenAIJSONModel(LLMModel):
             )
         return response.json()
 
-    def _completion(self, prompt, return_type, temperature=0.5):
+    def _completion(self, prompt, return_type, temperature=None):
         import json
 
+        if temperature is None:
+            temperature = self._temperature
         full_prompt = prompt + (self._format_hint(return_type) if return_type else "")
         response = self.chat([{"role": "user", "content": full_prompt}], temperature)
         if not response.get("choices"):

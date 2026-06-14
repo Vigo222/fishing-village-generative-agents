@@ -304,6 +304,8 @@ parser.add_argument("--log", type=str, default="", help="Name of the log file")
 parser.add_argument("--agents", type=str, default="", help="Override personas, e.g. '伊莎贝拉,克劳斯' (test only)")
 parser.add_argument("--inject", type=str, default="", help="Hot-injection plan, e.g. '用户分身@12' or 'A@3,B@5'")
 parser.add_argument("--reflect", type=str, default="", choices=["", "on", "off"], help="Override reflection switch (main experiment variable); empty=use config")
+parser.add_argument("--seed", type=int, default=None, help="Fix structural randomness for paired experiment reproducibility")
+parser.add_argument("--temp", type=float, default=None, help="Override LLM temperature for both tiers (experiment=0, demo=0.5)")
 args = parser.parse_args()
 
 
@@ -339,9 +341,23 @@ if __name__ == "__main__":
 
     inject_plan = parse_inject_plan(args.inject) if args.inject else {}
 
+    # 配对实验:固定结构性随机(random 模块)。须在构造 SimulateServer(内含 Agent
+    # 初始化用 random)之前 seed。注意:这只固定 random 模块,LLM 随机(temperature)
+    # 不受控,故同 seed 不保证全程逐帧一致(见实验设计第三节与 --seed 验证结论)。
+    if args.seed is not None:
+        import random
+        random.seed(args.seed)
+
     # 主实验变量:--reflect on/off 覆盖 config 的 think.reflect(对照组屏蔽反思)
     if args.reflect:
         sim_config.setdefault("agent_base", {}).setdefault("think", {})["reflect"] = (args.reflect == "on")
+
+    # 采样温度覆盖:实验跑批 --temp 0,演示 --temp 0.5(覆盖旗舰与快速两档)
+    if args.temp is not None:
+        think = sim_config.setdefault("agent_base", {}).setdefault("think", {})
+        for key in ("llm", "llm_fast"):
+            if key in think:
+                think[key]["temperature"] = args.temp
 
     static_root = "frontend/static"
 
