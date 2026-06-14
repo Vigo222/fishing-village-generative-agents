@@ -16,6 +16,7 @@ import glob
 import argparse
 import subprocess
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -61,10 +62,13 @@ def run_one(arm, seed, dry):
         cmd = base + ["--resume", "--step", str(TARGET_STEP - done)]  # 补跑剩余步(不再注入)
         mode = f"resume-from-{done}"
     est = estimate_calls(arm)
-    print(f"\n>>> [{arm} seed{seed}] {mode};预估调用量 ~{est} 次;{datetime.now():%H:%M:%S}")
+    print(f">>> [{arm} seed{seed}] 启动 {mode};预估调用 ~{est};{datetime.now():%H:%M:%S}", flush=True)
     if dry:
         return {"arm": arm, "seed": seed, "name": name, "status": "dry", "mode": mode, "est_calls": est}
-    rc = subprocess.run(cmd).returncode
+    # 各轮 stdout 单独落盘(并发时不互相刷屏);run.log 仍是该轮的文件日志
+    os.makedirs(f"{CKPT}/{name}", exist_ok=True)
+    with open(f"{CKPT}/{name}/stdout.log", "a", encoding="utf-8") as f:
+        rc = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT).returncode
     now = last_step(name)
     status = "done" if now >= TARGET_STEP else "FAILED"
     if status == "FAILED":
@@ -77,11 +81,20 @@ def run_one(arm, seed, dry):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--concurrency", type=int, default=1,
+                    help="跨轮并行数(各轮独立进程/各自seed,对复现性零影响;旗舰吞吐~并发6饱和,建议5-6)")
     args = ap.parse_args()
 
+    jobs = [(arm, seed) for arm in ARMS for seed in SEEDS]
     results = []
-    for arm in ARMS:
-        for seed in SEEDS:
+    if args.concurrency > 1 and not args.dry_run:
+        print(f"跨轮并行跑批,concurrency={args.concurrency}(各轮独立进程,不影响复现)")
+        with ThreadPoolExecutor(max_workers=args.concurrency) as ex:
+            futs = {ex.submit(run_one, arm, seed, False): (arm, seed) for arm, seed in jobs}
+            for fut in as_completed(futs):
+                results.append(fut.result())
+    else:
+        for arm, seed in jobs:
             results.append(run_one(arm, seed, args.dry_run))
 
     os.makedirs(CKPT, exist_ok=True)
