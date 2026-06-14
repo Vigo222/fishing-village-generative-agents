@@ -97,6 +97,25 @@ class Scratch:
         # failsafe:出错一律按 ADD 处理(宁可多记,不错删)
         return Result(prompt, _callback, ["ADD", "-1", "failsafe"], memory_consolidateResponse)
 
+    def prompt_interview(self, question, memories):
+        prompt = self.build_prompt(
+            "interview",
+            {
+                "base_desc": self._base_desc(),
+                "agent": self.name,
+                "memories": "\n".join(
+                    ["- {}".format(m.describe) for m in memories]
+                ) if memories else "(暂时想不起特别相关的事)",
+                "question": question,
+            }
+        )
+
+        class interviewResponse(BaseModel):
+            res: str = Field(description="以受访者第一人称、依据其记忆与性格作答,2-4句话")
+
+        failsafe = "（{}沉默了一会儿,没有作答。）".format(self.name)
+        return Result(prompt, None, failsafe, interviewResponse)
+
     def prompt_wake_up(self):
         prompt = self.build_prompt(
             "wake_up",
