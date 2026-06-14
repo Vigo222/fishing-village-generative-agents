@@ -18,10 +18,10 @@ import subprocess
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from dotenv import load_dotenv, find_dotenv
+from dotenv import load_dotenv
 
 sys.stdout.reconfigure(encoding="utf-8")
-load_dotenv(find_dotenv())
+load_dotenv(".env")  # 显式路径(cwd=generative_agents),避开 Py3.14 find_dotenv 的栈帧问题
 
 # 双 key:按 seed 分配(每个 seed 的 A/B 两臂用同一把,不在配对内引入 key 差异);
 # 两把 key 实测为独立配额,跨轮并行时分摊到两个吞吐池≈翻倍。仅一把则全用它。
@@ -84,9 +84,10 @@ def run_one(arm, seed, dry):
         return {"arm": arm, "seed": seed, "name": name, "status": "dry", "mode": mode, "est_calls": est, "key": ktag}
     # 该轮子进程用分配到的 key(覆盖环境变量,start.py 经 ${OPENAI_API_KEY} 读取)
     env = {**os.environ, "OPENAI_API_KEY": key}
-    # 各轮 stdout 单独落盘(并发时不互相刷屏);run.log 仍是该轮的文件日志
-    os.makedirs(f"{CKPT}/{name}", exist_ok=True)
-    with open(f"{CKPT}/{name}/stdout.log", "a", encoding="utf-8") as f:
+    # stdout 落到独立日志目录(切勿预建 checkpoint 目录,否则 start.py 误判"名字已存在"
+    # 去 input() 要新名字→子进程无 stdin→EOFError 崩溃)。fresh 轮要求 checkpoint 目录不存在。
+    os.makedirs("results/batch_logs", exist_ok=True)
+    with open(f"results/batch_logs/{name}.log", "a", encoding="utf-8") as f:
         rc = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, env=env).returncode
     now = last_step(name)
     status = "done" if now >= TARGET_STEP else "FAILED"
