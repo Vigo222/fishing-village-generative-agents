@@ -18,7 +18,22 @@ import subprocess
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from dotenv import load_dotenv, find_dotenv
+
 sys.stdout.reconfigure(encoding="utf-8")
+load_dotenv(find_dotenv())
+
+# 双 key:按 seed 分配(每个 seed 的 A/B 两臂用同一把,不在配对内引入 key 差异);
+# 两把 key 实测为独立配额,跨轮并行时分摊到两个吞吐池≈翻倍。仅一把则全用它。
+KEY1 = os.environ.get("OPENAI_API_KEY", "")
+KEY2 = os.environ.get("OPENAI_API_KEY_2", "")
+
+
+def key_for_seed(seed):
+    # 偶数 seed 走 key2(若有),奇数走 key1;两臂同 seed→同 key
+    if KEY2 and seed % 2 == 0:
+        return KEY2
+    return KEY1
 
 ARMS = ["off", "on"]          # 反思关组先跑(更快),再跑反思开组
 SEEDS = [1, 2, 3, 4, 5]
@@ -62,13 +77,17 @@ def run_one(arm, seed, dry):
         cmd = base + ["--resume", "--step", str(TARGET_STEP - done)]  # 补跑剩余步(不再注入)
         mode = f"resume-from-{done}"
     est = estimate_calls(arm)
-    print(f">>> [{arm} seed{seed}] 启动 {mode};预估调用 ~{est};{datetime.now():%H:%M:%S}", flush=True)
+    key = key_for_seed(seed)
+    ktag = "key2" if (KEY2 and key == KEY2) else "key1"
+    print(f">>> [{arm} seed{seed}] 启动 {mode}({ktag});预估调用 ~{est};{datetime.now():%H:%M:%S}", flush=True)
     if dry:
-        return {"arm": arm, "seed": seed, "name": name, "status": "dry", "mode": mode, "est_calls": est}
+        return {"arm": arm, "seed": seed, "name": name, "status": "dry", "mode": mode, "est_calls": est, "key": ktag}
+    # 该轮子进程用分配到的 key(覆盖环境变量,start.py 经 ${OPENAI_API_KEY} 读取)
+    env = {**os.environ, "OPENAI_API_KEY": key}
     # 各轮 stdout 单独落盘(并发时不互相刷屏);run.log 仍是该轮的文件日志
     os.makedirs(f"{CKPT}/{name}", exist_ok=True)
     with open(f"{CKPT}/{name}/stdout.log", "a", encoding="utf-8") as f:
-        rc = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT).returncode
+        rc = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, env=env).returncode
     now = last_step(name)
     status = "done" if now >= TARGET_STEP else "FAILED"
     if status == "FAILED":
@@ -105,7 +124,7 @@ def main():
     print("\n==== 跑批汇总 ====")
     for r in results:
         print(f"  {r['name']}: {r['status']}" +
-              (f" (step {r.get('last_step')})" if "last_step" in r else ""))
+              (f" (step {r.get('last_step')}, {r.get('key','')})" if "last_step" in r else ""))
     failed = [r for r in results if r["status"] == "FAILED"]
     print(f"\n完成 {sum(r['status']=='done' for r in results)} / 跳过 {sum(r['status']=='skip-done' for r in results)}"
           f" / 失败 {len(failed)}。manifest: {MANIFEST}")
