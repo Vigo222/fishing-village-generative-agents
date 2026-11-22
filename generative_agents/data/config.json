@@ -51,5 +51,14 @@
                 "max_candidates": 4
             }
         }
+    },
+    "scoring": {
+        "llm": {
+            "provider": "openai_json",
+            "model": "zai-org/GLM-5.3",
+            "base_url": "https://api.siliconflow.cn/v1",
+            "api_key": "${OPENAI_API_KEY}",
+            "temperature": 0
+        }
     }
 }

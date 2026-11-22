@@ -109,8 +109,13 @@ if __name__ == "__main__":
     with open(args.facts, "r", encoding="utf-8") as f:
         facts = json.load(f)["facts"]
     with open("data/config.json", "r", encoding="utf-8") as f:
-        llm_config = json.load(f)["agent"]["think"]["llm"]
-    llm_config["temperature"] = 0
+        config = json.load(f)
+    # 打分模型必须和被测模型不同,否则是模型给自己打分
+    llm_config = config["scoring"]["llm"]
+    think = config["agent"]["think"]
+    tested = {think[k]["model"] for k in ("llm", "llm_fast") if k in think}
+    if llm_config["model"] in tested:
+        raise SystemExit("scoring model '{}' is also a model under test".format(llm_config["model"]))
     result = score_events(read_events(args.events), facts, make_llm_judge(create_llm_model(llm_config)))
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)

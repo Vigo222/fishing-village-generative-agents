@@ -11,6 +11,25 @@ from modules import memory, utils
 from modules.measure import EventLog, ExperimentParams, set_event_log
 
 
+SEED_KEYS = {"step", "source", "listener", "message"}
+
+
+def load_seed_message(path):
+    """自然相遇的播种说明:第几步、谁(场外消息源)告诉哪位居民、消息原文。
+
+    事实槽(答案表)不在这里,只交给 score.py。
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        seed = json.load(f)
+    if set(seed) != SEED_KEYS:
+        raise ValueError(
+            "seed message keys must be exactly {}, got {}".format(sorted(SEED_KEYS), sorted(seed))
+        )
+    if not isinstance(seed["step"], int) or seed["step"] < 1:
+        raise ValueError("seed message step must be an integer >= 1")
+    return seed
+
+
 # 居民名单从 data/town.json 读取(裁剪小镇规模只改配置);文件缺失时回退到原版 25 人
 def load_personas():
     town_file = "data/town.json"
@@ -38,12 +57,13 @@ ARRIVAL_DESCRIBE = "{name}是刚来到村子的陌生面孔，正站在路边打
 
 
 class SimulateServer:
-    def __init__(self, name, static_root, checkpoints_folder, config, start_step=0, verbose="info", log_file="", inject_plan=None):
+    def __init__(self, name, static_root, checkpoints_folder, config, start_step=0, verbose="info", log_file="", inject_plan=None, seed_message=None):
         self.name = name
         self.static_root = static_root
         self.checkpoints_folder = checkpoints_folder
         # 热注入计划(触发器A):{step: [agent_name, ...]}
         self.inject_plan = inject_plan or {}
+        self.seed_message = seed_message
 
         # 历史存档数据（用于断点恢复）
         self.config = config
@@ -95,6 +115,7 @@ class SimulateServer:
         for i in range(self.start_step, self.start_step + step):
             # 热注入检查:固定在每步开头、agent 循环之外(避免迭代中修改 dict)
             self._check_injection(i + 1)
+            self._check_seed_message(i + 1)
             title = "Simulate Step[{}/{}, time: {}]".format(i+1, self.start_step + step, timer.get_date())
             self.logger.info("\n" + utils.split_line(title, "="))
             for name, status in self.agent_status.items():
@@ -126,6 +147,18 @@ class SimulateServer:
 
             if stride > 0:
                 timer.forward(stride)
+
+    def _check_seed_message(self, step):
+        """播种:到指定步数时,场外消息源把消息原文告诉一位居民(和接力链第一跳同一段代码)。"""
+        seed = self.seed_message
+        if not seed or seed["step"] != step:
+            return
+        listener = seed["listener"]
+        if listener not in self.game.agents:
+            raise ValueError("seed message listener '{}' is not in the town".format(listener))
+        conv_id = "seed|{}|{}".format(seed["source"], listener)
+        self.game.get_agent(listener).hear_message(seed["source"], seed["message"], conv_id, "scripted")
+        self.logger.info("[SEED] {} 把消息告诉了 {} @ step {}".format(seed["source"], listener, step))
 
     # ------------------------------------------------------------------
     # 运行时热注入(自研功能 1)
@@ -306,6 +339,7 @@ parser.add_argument("--agents", type=str, default="", help="Override personas, e
 parser.add_argument("--inject", type=str, default="", help="Hot-injection plan, e.g. '用户分身@12' or 'A@3,B@5'")
 parser.add_argument("--reflect", type=str, default="", choices=["", "on", "off"], help="Override reflection switch (main experiment variable); empty=use config")
 parser.add_argument("--experiment", type=str, default="", help="JSON file of memory-layer experiment parameters (see data/experiments/); empty=use data/config.json")
+parser.add_argument("--message", type=str, default="", help="JSON file that plants the experiment message: {step, source, listener, message}")
 parser.add_argument("--seed", type=int, default=None, help="Fix structural randomness for paired experiment reproducibility")
 parser.add_argument("--temp", type=float, default=None, help="Override LLM temperature for both tiers (experiment=0, demo=0.5)")
 args = parser.parse_args()
@@ -342,6 +376,7 @@ if __name__ == "__main__":
         start_step = 0
 
     inject_plan = parse_inject_plan(args.inject) if args.inject else {}
+    seed_message = load_seed_message(args.message) if args.message else None
 
     # 配对实验:固定结构性随机(random 模块)。须在构造 SimulateServer(内含 Agent
     # 初始化用 random)之前 seed。注意:这只固定 random 模块,LLM 随机(temperature)
@@ -382,7 +417,7 @@ if __name__ == "__main__":
     os.makedirs(checkpoints_folder, exist_ok=True)
     event_log = set_event_log(EventLog(f"{checkpoints_folder}/events.jsonl"))
     try:
-        server = SimulateServer(name, static_root, checkpoints_folder, sim_config, start_step, args.verbose, args.log, inject_plan)
+        server = SimulateServer(name, static_root, checkpoints_folder, sim_config, start_step, args.verbose, args.log, inject_plan, seed_message)
         event_log.start_run(name, "natural", params.to_dict())
         server.simulate(args.step, args.stride)
     except BaseException as e:

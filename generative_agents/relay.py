@@ -68,16 +68,7 @@ class RelayAgent(MemoryOps):
 
     def hear(self, speaker, text, conversation_id, event_log, source):
         """听到一句话并存进记忆;逐字原文只进事件日志。"""
-        self.conversation_id = conversation_id
-        event_log.log(
-            "utterance", conversation_id=conversation_id, turn=0,
-            speaker=speaker, listener=self.name, text=text, source=source,
-        )
-        chats = [(speaker, text)]
-        stored = self._chat_memory_text(chats)
-        event = memory.Event(self.name, "对话", speaker, describe=stored, address=RELAY_ADDRESS)
-        self._add_concept("chat", event)
-        self.chats.extend(self._readable_chats(chats, stored, speaker))
+        self.hear_message(speaker, text, conversation_id, source)
         if self.params.reflect:
             self._reflect_chats()
         self.chats = []
