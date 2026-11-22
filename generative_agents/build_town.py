@@ -27,7 +27,7 @@ TOWN20_PATH = BASE / "data/town_20.json"
 RENDER_PATH = BASE.parent / "docs/resources/town_map.png"
 
 WORLD = "the Ville"
-W, H = 54, 64
+W, H = 62, 62
 TILE = 32
 
 # 图块集(素材图片不变,只登记编号起点)
@@ -69,14 +69,21 @@ LAYERS = [BG, EG, ED1, ED2, IG, WALL, F1, F2, FG1, FG2, COL]
 GRASS = 2
 COLLIDE = 32125
 WOOD = 490
-HOME_FLOOR = [4874, 4875, 4876, 4950, 4951, 4952, 4953, 5026, 5028, 5029, 5102,
-              5103, 5104, 5105, 5178, 5179, 5180, 5181, 5254, 5255, 5256, 5257]
+FLIP_H = 0x80000000  # Tiled 的"水平翻转"标记
+# 地板花色:Room_Builder 里每种花色是一块 4 列 x 6 行的图块
+FLOOR_BASES = {"米色": 4874, "蓝色": 4880, "粉色": 4892, "奶黄": 4898, "红砖": 4904, "灰褐": 5348}
+FLOORS = {k: [b + c + 76 * r for c in range(4) for r in range(6)] for k, b in FLOOR_BASES.items()}
+HOME_FLOOR = FLOORS["米色"]
 PAVING = [9246, 9247, 9262, 9263, 9278, 9279, 9294, 9295]
 GRASS_DECO = [7, 8, 9, 10, 11, 15, 16, 22, 38, 54, 73, 89, 105]
+FLOWERS = [55, 71, 87, 103, 57, 73, 89, 105, 370, 386, 402]
+SPROUTS = [9474, 9475, 9478, 9479, 9480, 9490, 9491, 9494, 9495, 9496]
 
 WALL_STYLES = {
     "home": dict(TL=(5983, 6059), TM=(6136, 6212), TR=(5986, 6062), L=6135, R=6138,
                  BL=6363, BM=6364, BR=6366),
+    "brown": dict(TL=(8651, 8727), TM=(8804, 8880), TR=(8654, 8730), L=8803, R=8806,
+                  BL=9031, BM=9032, BR=9034),
     "shop": dict(TL=(6515, 6591), TM=(6668, 6744), TR=(6518, 6594), L=6667, R=6670,
                  BL=6895, BM=6896, BR=6898),
 }
@@ -86,6 +93,11 @@ WALL_STYLES = {
 STAMPS = {
     "bed": dict(layers={F2: [[13289, 13290], [13305, 13306], [13321, 13322]]},
                 collide=[(0, 0), (1, 0), (0, 1), (1, 1)], use=[(0, 2), (1, 2)]),
+    "bed_tan": dict(layers={F1: [[13906, 13907], [13922, 13923], [13938, 13939]]},
+                    collide=[(0, 0), (1, 0), (0, 1), (1, 1)], use=[(0, 2), (1, 2)]),
+    "dresser_b": dict(layers={F1: [[13517, 13518], [13533, 13534]]},
+                      collide=[(0, 0), (1, 0), (0, 1), (1, 1)], use=[(1, 2)]),
+    "plant": dict(layers={F1: [[28013], [28029]], FG1: [[28013]]}, collide=[(0, 0), (0, 1)], use=[]),
     "dresser": dict(layers={F1: [[13453, 13454], [13469, 13470]]},
                     collide=[(0, 0), (1, 0), (0, 1), (1, 1)], use=[(1, 2)]),
     "desk": dict(layers={F1: [[15912, 0], [15928, 15952], [15944, 15968]], FG1: [[15912, 0]]},
@@ -137,6 +149,15 @@ STAMPS = {
     "flowerbed": dict(layers={ED1: [[55, 87, 71, 103], [87, 71, 103, 55]]},
                       collide=[(x, y) for x in range(4) for y in range(2)],
                       use=[(x, 2) for x in range(4)] + [(x, -1) for x in range(4)]),
+    "tree_tall": dict(layers={ED2: [[449, 450], [465, 466]]},
+                      collide=[(0, 0), (1, 0), (0, 1), (1, 1)], use=[]),
+    "tree_slim": dict(layers={ED2: [[451], [467]]}, collide=[(0, 0), (0, 1)], use=[]),
+    "bush": dict(layers={ED2: [[10367]]}, collide=[(0, 0)], use=[]),
+    "stall": dict(layers={ED2: [[9093, 9094], [9109, 9110]], FG1: [[9093, 9094]]},
+                  collide=[(0, 1), (1, 1)], use=[]),
+    "barrels": dict(layers={ED2: [[9218], [9234]]}, collide=[(0, 0), (0, 1)], use=[]),
+    "clothesline": dict(layers={ED2: [[9193, 9194], [9209, 9210]]},
+                        collide=[(0, 0), (1, 0), (0, 1), (1, 1)], use=[]),
     "crates": dict(layers={ED2: [[9186, 9189, 9190], [9202, 9205, 9206]]},
                    collide=[(x, y) for x in range(3) for y in range(2)], use=[]),
 }
@@ -177,29 +198,35 @@ class TownMap:
 
     def paint_roads(self):
         # 沙土路按相邻关系选边角图块(81-83 / 97-99 / 113-115)
-        for (x, y) in self.road:
-            n, s = (x, y - 1) in self.road, (x, y + 1) in self.road
-            w, e = (x - 1, y) in self.road, (x + 1, y) in self.road
-            row = 0 if not n and s else 2 if n and not s else 1
-            col = 0 if not w and e else 2 if w and not e else 1
-            self.put(EG, x, y, 81 + row * 16 + col)
+        r = self.road
+        for (x, y) in r:
+            n, s = (x, y - 1) in r, (x, y + 1) in r
+            w, e = (x - 1, y) in r, (x + 1, y) in r
+            gid = 81 + (0 if not n and s else 2 if n and not s else 1) * 16 \
+                + (0 if not w and e else 2 if w and not e else 1)
+            self.put(EG, x, y, gid)
 
-    def stamp(self, name, x, y, addr=None):
-        """把一件家具盖到地图上;addr 给出时,在它的 use 格写上物件地址。"""
+    def stamp(self, name, x, y, addr=None, flip=False):
+        """把一件家具盖到地图上;addr 给出时,在它的 use 格写上物件地址。flip=True 为左右镜像。"""
         spec = STAMPS[name]
+        width = max(len(row) for rows in spec["layers"].values() for row in rows)
+
+        def fx(dx):
+            return width - 1 - dx if flip else dx
+
         for layer, rows in spec["layers"].items():
             for dy, row in enumerate(rows):
                 for dx, gid in enumerate(row):
                     if gid:
-                        self.put(layer, x + dx, y + dy, gid)
-                        self.reserved.add((x + dx, y + dy))
+                        self.put(layer, x + fx(dx), y + dy, gid | FLIP_H if flip else gid)
+                        self.reserved.add((x + fx(dx), y + dy))
         for dx, dy in spec["collide"]:
-            self.block(x + dx, y + dy)
+            self.block(x + fx(dx), y + dy)
         if addr:
             for dx, dy in spec["use"]:
-                if not self.blocked(x + dx, y + dy):
-                    self.set_addr(x + dx, y + dy, addr)
-                    self.reserved.add((x + dx, y + dy))
+                if not self.blocked(x + fx(dx), y + dy):
+                    self.set_addr(x + fx(dx), y + dy, addr)
+                    self.reserved.add((x + fx(dx), y + dy))
 
     def counter(self, x, y, length, addr):
         """柜台:上排是柜台后面站人的位置(可走),下排挡路。"""
@@ -211,43 +238,64 @@ class TownMap:
             self.block(x + i, y + 1)
             self.set_addr(x + i, y, addr)
 
-    def building(self, x0, y0, w, h, sector, arena, style, floor, door_dx):
-        """画一栋房子:上墙占两行,下墙一行,门开在下墙(两格宽)。返回室内左上角坐标。"""
+    def building(self, x0, y0, w, h, sector, arena, style, floor, door_dx, door_side="bottom"):
+        """画一栋房子:上墙占两行,下墙一行;门两格宽,开在下墙或上墙。返回室内左上角坐标。"""
         st = WALL_STYLES[style]
         x1, y1 = x0 + w - 1, y0 + h - 1
         door = (x0 + door_dx, x0 + door_dx + 1)
+        top_door = door if door_side == "top" else ()
+        bottom_door = door if door_side == "bottom" else ()
+        for x in range(x0 - 1, x1 + 2):  # 房子四周留一圈不种树
+            for y in range(y0 - 1, y1 + 2):
+                self.reserved.add((x, y))
         for x in range(x0, x1 + 1):
             for y in range(y0, y1 + 1):
-                self.reserved.add((x, y))
                 self.set_addr(x, y, [sector])
-        for x in range(x0, x1 + 1):
-            key = "TL" if x == x0 else "TR" if x == x1 else "TM"
-            self.put(WALL, x, y0, st[key][0])
-            self.put(FG1, x, y0, st[key][0])
-            self.put(WALL, x, y0 + 1, st[key][1])
-            self.block(x, y0)
-            self.block(x, y0 + 1)
-            if x in door:
-                continue
-            gid = st["BL"] if x in (x0, door[1] + 1) else st["BR"] if x in (x1, door[0] - 1) else st["BM"]
-            self.put(WALL, x, y1, gid)
-            self.put(FG1, x, y1, gid)
-            self.block(x, y1)
+            if x not in top_door:
+                key = "TL" if x == x0 or x - 1 in top_door else "TR" if x == x1 or x + 1 in top_door else "TM"
+                self.put(WALL, x, y0, st[key][0])
+                self.put(FG1, x, y0, st[key][0])
+                self.put(WALL, x, y0 + 1, st[key][1])
+                self.block(x, y0)
+                self.block(x, y0 + 1)
+            if x not in bottom_door:
+                gid = st["BL"] if x == x0 or x - 1 in bottom_door else \
+                    st["BR"] if x == x1 or x + 1 in bottom_door else st["BM"]
+                self.put(WALL, x, y1, gid)
+                self.put(FG1, x, y1, gid)
+                self.block(x, y1)
         for y in range(y0 + 2, y1):
             self.put(WALL, x0, y, st["L"])
             self.put(WALL, x1, y, st["R"])
             self.block(x0, y)
             self.block(x1, y)
         cells = [(x, y) for y in range(y0 + 2, y1) for x in range(x0 + 1, x1)]
-        cells += [(x, y1) for x in door]
+        cells += [(x, y1) for x in bottom_door] + [(x, y) for x in top_door for y in (y0, y0 + 1)]
         for x, y in cells:
-            gid = floor if isinstance(floor, int) else self.rng.choice(floor)
-            self.put(IG, x, y, gid)
+            self.put(IG, x, y, floor if isinstance(floor, int) else self.rng.choice(floor))
             self.set_addr(x, y, [sector, arena])
-        for x in door:  # 门口外一格留空
-            self.reserved.add((x, y1 + 1))
-        self.buildings[sector] = dict(box=(x0, y0, x1, y1), door=(door[0], y1), arena=arena)
+        self.buildings[sector] = dict(box=(x0, y0, x1, y1), door=door, door_side=door_side, arena=arena)
         return x0 + 1, y0 + 2
+
+    def garden(self, x0, y0, x1, y1, gate_side):
+        """菜地:一圈篱笆(朝巷子留个口),里面是翻过的土和菜苗。"""
+        for y in range(y0, y1 + 1):
+            for x in range(x0, x1 + 1):
+                self.reserved.add((x, y))
+                edge_x = 0 if x == x0 else 2 if x == x1 else 1
+                edge_y = 0 if y == y0 else 2 if y == y1 else 1
+                if edge_x == 1 and edge_y == 1:
+                    ix = 0 if x == x0 + 1 else 2 if x == x1 - 1 else 1
+                    iy = 0 if y == y0 + 1 else 2 if y == y1 - 1 else 1
+                    self.put(EG, x, y, 9453 + iy * 16 + ix)
+                    if self.rng.random() < 0.75:
+                        self.put(ED1, x, y, self.rng.choice(SPROUTS))
+                    continue
+                gate_y = y1 if gate_side == "bottom" else y0
+                if y == gate_y and abs(x - (x0 + x1) // 2) <= 0:
+                    continue
+                self.put(ED1, x, y, 265 + edge_y * 16 + edge_x)
+                self.block(x, y)
 
     # ---- 导出 ----
     def tree_of(self):
@@ -324,47 +372,104 @@ class TownMap:
 # ---------------------------------------------------------------------------
 # 小镇布局
 # ---------------------------------------------------------------------------
-HOME_ROWS_Y = [2, 11, 44, 53]  # 四排民居的上沿
-HOME_X = [5, 14, 23, 32, 41]  # 每排五户
-HOME_W, HOME_H = 8, 7
-PLAZA = (17, 32, 36, 43)
+# 布局:一条东西向的老街和一条南北向的街在镇中心交叉,交叉口南侧是小广场;
+# 店铺沿老街两侧面对面开门;民居分四排夹着南、北两条巷子,门都朝巷子开。
+CROSS_X = (29, 31)      # 南北街
+MAIN_Y = (29, 32)       # 老街
+LANE_N, LANE_S = (10, 11), (51, 52)   # 北巷、南巷
+PLAZA = (19, 32, 41, 42)
+
+# 20 块宅基地:(x, y, 宽, 门朝向)。每排 5 户 + 1 块空地(菜地/小树林),前后错落。
+HOME_SLOTS = [
+    # 北巷北侧(门朝南)
+    (3, 2, 8, "bottom"), (12, 3, 9, "bottom"), (34, 3, 8, "bottom"), (43, 2, 8, "bottom"), (52, 3, 8, "bottom"),
+    # 北巷南侧(门朝北)
+    (2, 12, 8, "top"), (11, 13, 8, "top"), (20, 12, 8, "top"), (42, 12, 9, "top"), (52, 13, 8, "top"),
+    # 南巷北侧(门朝南)
+    (2, 43, 9, "bottom"), (20, 44, 8, "bottom"), (33, 44, 8, "bottom"), (42, 44, 8, "bottom"), (51, 43, 9, "bottom"),
+    # 南巷南侧(门朝北)
+    (3, 53, 8, "top"), (12, 54, 8, "top"), (21, 53, 8, "top"), (33, 54, 9, "top"), (43, 53, 8, "top"),
+]
+CORE_SLOTS = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18]  # 核心 10 户:每排隔一户取一户
+GARDENS = [(22, 3, 27, 9, "bottom"), (33, 13, 40, 18, "top"), (12, 44, 18, 50, "bottom"), (52, 53, 59, 59, "top")]
+HOME_STYLES = ["home", "brown"]
+HOME_FLOORS = ["米色", "蓝色", "粉色", "奶黄", "红砖", "灰褐"]
 
 PUBLIC_TREE_ORDER = ["小广场", "早点铺", "菜市场", "杂货店", "茶馆", "卫生所"]
 
 
 def home_slots():
-    """20 个宅基地,按"核心 10 户先占、均匀分散"的顺序排列。"""
-    core, extra = [], []
-    for r, y in enumerate(HOME_ROWS_Y):
-        for c, x in enumerate(HOME_X):
-            (core if (r + c) % 2 == 0 else extra).append((x, y))
-    return core + extra
+    """宅基地顺序:核心 10 户在前(均匀分散在四排里),其余 10 户在后。"""
+    rest = [i for i in range(len(HOME_SLOTS)) if i not in CORE_SLOTS]
+    return [(i, HOME_SLOTS[i]) for i in CORE_SLOTS + rest]
+
+
+def build_home(m, person, index, x, y, w, door_side):
+    sector = person["name"] + "家"
+    iw = w - 2
+    flip = index % 2 == 1
+    door_col = 2 if door_side == "bottom" else iw - 3  # 门在室内第几列(未镜像时)
+    door_dx = 1 + (iw - door_col - 2 if flip else door_col)
+    style = HOME_STYLES[(index // 2 + index) % 2]
+    floor = FLOORS[HOME_FLOORS[index * 5 % len(HOME_FLOORS)]]
+    ix, iy = m.building(x, y, w, 7, sector, "屋里", style, floor, door_dx, door_side)
+
+    def place(name, col, row, obj=None):
+        width = max(len(r) for rows in STAMPS[name]["layers"].values() for r in rows)
+        px = ix + (iw - col - width if flip else col)
+        m.stamp(name, px, iy + row, [sector, "屋里", obj] if obj else None, flip)
+
+    bed_row = 0 if door_side == "bottom" else 1
+    place("dresser" if index % 3 else "dresser_b", 0, -1, "衣柜")
+    place("desk", 0, 1, "书桌")
+    place("bed" if index % 4 < 2 else "bed_tan", 2, bed_row, "床")
+    place("stove", iw - 1, 0, "灶台")
+    if iw >= 7 and door_side == "bottom":
+        place("plant", 4, -1)
+    person["home"] = sector
+    col = iw - 2
+    person["coord"] = [ix + (iw - 1 - col if flip else col), iy + 3]
+
+    # 门不贴着巷子的,铺两块踏脚石,门边种点花
+    x0, y0, x1, y1 = m.buildings[sector]["box"]
+    front = y1 + 1 if door_side == "bottom" else y0 - 1
+    if (x0, front) not in m.road:
+        for dx in range(w):
+            cx = x0 + dx
+            if cx in m.buildings[sector]["door"]:
+                m.put(ED1, cx, front, 413)
+            elif m.rng.random() < 0.6:
+                m.put(ED1, cx, front, m.rng.choice(FLOWERS))
 
 
 def build_map(residents):
     m = TownMap()
 
-    # 道路:两条竖街 + 五条横巷 + 中央大街,小广场与大街连成一片
-    m.add_road(2, 9, 3, 61)
-    m.add_road(50, 9, 51, 61)
-    for y in (9, 18, 42, 51, 60):
-        m.add_road(2, y, 51, y + 1)
-    m.add_road(2, 29, 51, 31)
+    # 道路
+    m.add_road(0, MAIN_Y[0], W - 1, MAIN_Y[1])
+    m.add_road(CROSS_X[0], 0, CROSS_X[1], H - 1)
+    m.add_road(2, LANE_N[0], 59, LANE_N[1])
+    m.add_road(2, LANE_S[0], 59, LANE_S[1])
     m.add_road(*PLAZA)
+    m.add_road(51, 22, 59, 28)  # 菜市场东边的露天集市空地
 
     # 民居
-    for person, (x, y) in zip(residents, home_slots()):
-        sector = person["name"] + "家"
-        ix, iy = m.building(x, y, HOME_W, HOME_H, sector, "屋里", "home", HOME_FLOOR, 3)
-        m.stamp("dresser", ix, iy - 1, [sector, "屋里", "衣柜"])
-        m.stamp("desk", ix, iy + 1, [sector, "屋里", "书桌"])
-        m.stamp("bed", ix + 2, iy, [sector, "屋里", "床"])
-        m.stamp("stove", ix + 5, iy, [sector, "屋里", "灶台"])
-        person["home"] = sector
-        person["coord"] = [ix + 4, iy + 3]
+    for person, (index, (x, y, w, side)) in zip(residents, home_slots()):
+        build_home(m, person, index, x, y, w, side)
+    for box in GARDENS:
+        m.garden(*box)
+
+    # ---- 老街北侧(门朝南) ----
+    # 卫生所
+    ix, iy = m.building(3, 20, 10, 9, "卫生所", "诊室", "shop", FLOORS["蓝色"], 4)
+    m.stamp("dresser", ix + 2, iy - 1, ["卫生所", "诊室", "药柜"])
+    m.stamp("desk", ix, iy + 1, ["卫生所", "诊室", "诊桌"])
+    m.stamp("bed", ix + 5, iy, ["卫生所", "诊室", "病床"])
+    m.stamp("plant", ix + 7, iy - 1)
+    m.stamp("table", ix + 5, iy + 4, ["卫生所", "诊室", "候诊椅"])
 
     # 早点铺
-    ix, iy = m.building(5, 20, 12, 9, "早点铺", "店堂", "shop", WOOD, 5)
+    ix, iy = m.building(15, 20, 12, 9, "早点铺", "店堂", "shop", WOOD, 5)
     m.stamp("fridge", ix, iy - 2)
     m.stamp("utensils", ix + 2, iy - 2)
     m.stamp("cooktop", ix + 4, iy - 2, ["早点铺", "店堂", "蒸笼灶台"])
@@ -372,9 +477,10 @@ def build_map(residents):
     for dx in (0, 4):
         m.stamp("table", ix + dx, iy + 3, ["早点铺", "店堂", "早点铺桌椅"])
     m.stamp("table", ix + 7, iy + 4, ["早点铺", "店堂", "早点铺桌椅"])
+    m.stamp("table", ix + 7, iy + 1, ["早点铺", "店堂", "早点铺桌椅"])
 
     # 菜市场
-    ix, iy = m.building(19, 20, 16, 9, "菜市场", "摊位区", "shop", WOOD, 7)
+    ix, iy = m.building(34, 20, 16, 9, "菜市场", "摊位区", "shop", FLOORS["灰褐"], 7)
     m.stamp("hanging", ix + 4, iy - 2)
     m.stamp("produce", ix, iy, ["菜市场", "摊位区", "蔬菜摊"])
     m.stamp("produce", ix + 2, iy, ["菜市场", "摊位区", "蔬菜摊"])
@@ -385,43 +491,49 @@ def build_map(residents):
     m.stamp("produce", ix, iy + 3, ["菜市场", "摊位区", "水果摊"])
     m.stamp("shelf", ix + 11, iy + 3, ["菜市场", "摊位区", "豆腐摊"])
 
-    # 杂货店
-    ix, iy = m.building(37, 20, 12, 9, "杂货店", "店堂", "shop", WOOD, 5)
-    m.counter(ix, iy + 1, 4, ["杂货店", "店堂", "杂货店柜台"])
-    for dx in (5, 7):
-        m.stamp("shelf", ix + dx, iy, ["杂货店", "店堂", "杂货店货架"])
-        m.stamp("shelf", ix + dx, iy + 3, ["杂货店", "店堂", "杂货店货架"])
-    m.stamp("cooler", ix, iy + 3, ["杂货店", "店堂", "冷饮柜"])
+    # 露天集市(只是摆设)
+    for x in (52, 55):
+        m.stamp("stall", x, 23)
+    m.stamp("crates", 57, 26)
+    m.stamp("barrels", 58, 22)
+    m.stamp("barrels", 51, 26)
 
+    # ---- 老街南侧(门朝北,和北侧店铺面对面) ----
     # 茶馆
-    ix, iy = m.building(5, 33, 10, 9, "茶馆", "茶室", "shop", WOOD, 3)
+    ix, iy = m.building(6, 33, 10, 9, "茶馆", "茶室", "shop", WOOD, 4, "top")
     m.stamp("fridge", ix + 6, iy - 2)
-    m.stamp("utensils", ix + 4, iy - 2)
-    m.counter(ix, iy, 4, ["茶馆", "茶室", "茶馆柜台"])
+    m.stamp("utensils", ix, iy - 2)
+    m.counter(ix, iy + 1, 3, ["茶馆", "茶室", "茶馆柜台"])
+    m.stamp("table", ix + 5, iy + 2, ["茶馆", "茶室", "茶桌"])
     for dx in (0, 4):
-        m.stamp("table", ix + dx, iy + 3, ["茶馆", "茶室", "茶桌"])
+        m.stamp("table", ix + dx, iy + 4, ["茶馆", "茶室", "茶桌"])
 
-    # 卫生所
-    ix, iy = m.building(39, 33, 10, 9, "卫生所", "诊室", "shop", HOME_FLOOR, 3)
-    m.stamp("dresser", ix + 2, iy - 1, ["卫生所", "诊室", "药柜"])
-    m.stamp("desk", ix, iy + 1, ["卫生所", "诊室", "诊桌"])
-    m.stamp("bed", ix + 5, iy, ["卫生所", "诊室", "病床"])
-    m.stamp("table", ix + 4, iy + 4, ["卫生所", "诊室", "候诊椅"])
+    # 杂货店
+    ix, iy = m.building(45, 33, 12, 9, "杂货店", "店堂", "shop", WOOD, 5, "top")
+    m.stamp("shelf", ix, iy, ["杂货店", "店堂", "杂货店货架"])
+    m.stamp("shelf", ix + 6, iy, ["杂货店", "店堂", "杂货店货架"])
+    m.stamp("cooler", ix + 8, iy, ["杂货店", "店堂", "冷饮柜"])
+    for dx in (0, 2):
+        m.stamp("shelf", ix + dx, iy + 3, ["杂货店", "店堂", "杂货店货架"])
+    m.counter(ix + 6, iy + 3, 4, ["杂货店", "店堂", "杂货店柜台"])
 
-    # 小广场:露天,整片都算"小广场"
+    # ---- 小广场:露天,整片都算"小广场" ----
     px0, py0, px1, py1 = PLAZA
     for y in range(py0, py1 + 1):
         for x in range(px0, px1 + 1):
             m.set_addr(x, y, ["小广场", "广场"])
             if m.rng.random() < 0.5:
                 m.put(ED1, x, y, m.rng.choice(PAVING))
-    m.stamp("bigtree", 25, 33, ["小广场", "广场", "大榕树下"])
-    for x, y in ((19, 34), (33, 34), (19, 39), (33, 39)):
+    m.stamp("bigtree", 28, 34, ["小广场", "广场", "大榕树下"])
+    for x, y in ((22, 34), (37, 34), (24, 40), (35, 40)):
         m.stamp("bench", x, y, ["小广场", "广场", "长凳"])
-    m.stamp("flowerbed", 20, 37, ["小广场", "广场", "花坛"])
-    m.stamp("flowerbed", 30, 37, ["小广场", "广场", "花坛"])
-    m.stamp("well", 35, 32)
-    m.stamp("crates", 17, 32)
+    m.stamp("flowerbed", 21, 38, ["小广场", "广场", "花坛"])
+    m.stamp("flowerbed", 36, 38, ["小广场", "广场", "花坛"])
+    m.stamp("well", 40, 33)
+    m.stamp("crates", 19, 33)
+    for x in (19, 41):
+        for y in (37, 42):
+            m.stamp("bush", x, y)
 
     m.paint_roads()
     decorate(m)
@@ -429,21 +541,22 @@ def build_map(residents):
 
 
 def decorate(m):
-    """在空草地上种树、撒草花(只做装饰,不占道路和门口)。"""
-    def free(x, y):
-        return (0 <= x < W and 0 <= y < H and (x, y) not in m.reserved
-                and not m.blocked(x, y))
+    """种树、撒草花(只做装饰):地图四周一圈林带,镇里的空地零星种几棵,房前屋后和路口不种。"""
+    def free(cells):
+        return all(0 <= x < W and 0 <= y < H and (x, y) not in m.reserved
+                   and not m.blocked(x, y) for x, y in cells)
 
-    # 树种在地图四边(本来就走不到的一圈)和零星空地上,民居之间的窄缝留着走人
-    for _ in range(3000):
-        x, y = m.rng.randrange(0, W - 1), m.rng.randrange(0, H - 1)
-        cells = [(x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1)]
-        on_edge = x == 0 or x == W - 2 or y == 0 or y == H - 2
-        if all(free(*c) for c in cells) and (on_edge or m.rng.random() < 0.02):
-            m.stamp("tree", x, y)
+    kinds = [("tree", 2, 2), ("tree", 2, 2), ("tree_tall", 2, 2), ("tree_slim", 1, 2), ("bush", 1, 1)]
+    for _ in range(6000):
+        name, tw, th = m.rng.choice(kinds)
+        x, y = m.rng.randrange(0, W - tw + 1), m.rng.randrange(0, H - th + 1)
+        on_edge = x < 2 or x + tw > W - 2 or y < 2 or y + th > H - 2
+        if free([(x + dx, y + dy) for dx in range(tw) for dy in range(th)]) \
+                and (on_edge or m.rng.random() < 0.07):
+            m.stamp(name, x, y)
     for y in range(H):
         for x in range(W):
-            if free(x, y) and m.rng.random() < 0.12:
+            if free([(x, y)]) and m.rng.random() < 0.14:
                 m.put(ED1, x, y, m.rng.choice(GRASS_DECO))
 
 
@@ -545,11 +658,13 @@ def render(m, residents, path, core_count):
         sheets.append((firstgid, columns, count, img))
 
     def tile(gid):
+        flip, gid = gid & FLIP_H, gid & ~FLIP_H
         for firstgid, columns, count, img in sheets:
             if firstgid <= gid < firstgid + count:
                 i = gid - firstgid
                 x, y = i % columns * TILE, i // columns * TILE
-                return img.crop((x, y, x + TILE, y + TILE))
+                out = img.crop((x, y, x + TILE, y + TILE))
+                return out.transpose(Image.FLIP_LEFT_RIGHT) if flip else out
 
     out = Image.new("RGBA", (W * TILE, H * TILE), (0, 0, 0, 255))
     for name in LAYERS:
@@ -577,13 +692,17 @@ def render(m, residents, path, core_count):
         for sector, info in m.buildings.items():
             x0, y0, x1, y1 = info["box"]
             cx = (x0 + x1 + 1) * TILE / 2
+            top = info["door_side"] == "top"
             if sector.endswith("家"):
                 fill = (255, 236, 150, 235) if sector in core else (215, 225, 240, 235)
-                label(sector, cx, (y0 + 0.7) * TILE, small, fill)
+                label(sector, cx, (y1 + 0.35 if top else y0 + 0.7) * TILE, small, fill)
             else:
-                label(sector, cx, (y0 + 0.8) * TILE, big, (255, 170, 120, 240))
+                label(sector, cx, (y1 + 0.3 if top else y0 + 0.8) * TILE, big, (255, 170, 120, 240))
         px0, py0, px1, py1 = PLAZA
-        label("小广场", (px0 + px1 + 1) * TILE / 2, (py1 - 0.3) * TILE, big, (255, 170, 120, 240))
+        label("小广场", (px0 + px1 + 1) * TILE / 2, (py1 + 0.3) * TILE, big, (255, 170, 120, 240))
+        label("北巷", 6 * TILE, 11 * TILE, small, (255, 255, 255, 200))
+        label("南巷", 6 * TILE, 52 * TILE, small, (255, 255, 255, 200))
+        label("老街", 3 * TILE, 31 * TILE, small, (255, 255, 255, 200))
     else:
         print("未找到中文字体,图片不带地名标注")
     path.parent.mkdir(parents=True, exist_ok=True)
