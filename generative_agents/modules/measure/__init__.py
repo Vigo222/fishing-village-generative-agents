@@ -6,3 +6,4 @@
 from .eventlog import EventLog, get_event_log, set_event_log, read_events, SCHEMA_VERSION
 from .params import ExperimentParams
 from .errors import LLMCallError
+from .seed import load_seed_message

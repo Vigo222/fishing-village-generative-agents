@@ -9,7 +9,7 @@ import relay
 import score
 from modules.storage import index as index_module
 from modules.model.llm_model import LLMModel
-from modules.measure import EventLog, ExperimentParams, LLMCallError, read_events, set_event_log
+from modules.measure import EventLog, ExperimentParams, LLMCallError, read_events, set_event_log, load_seed_message
 
 SPEC = "data/experiments/example/relay.json"
 
@@ -168,3 +168,21 @@ def test_scoring_reads_only_the_event_log(tmp_path, agent_config):
     assert set(result["summary"]) == {"said", "stored", "retrieved"}
     assert result["summary"]["said"] == {"present": 1, "total": 6, "retention": 1 / 6}
     assert len(result["rows"]) == (3 + 3 + 2) * 2
+
+
+def test_seed_message_spec_rejects_fact_slots(tmp_path):
+    seed = {"step": 1, "source": "通知员", "listener": "甲", "message": "m"}
+    good = tmp_path / "seed.json"
+    good.write_text(json.dumps(seed, ensure_ascii=False), encoding="utf-8")
+    assert load_seed_message(str(good)) == seed
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(dict(seed, facts=[]), ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_seed_message(str(bad))
+
+
+def test_scoring_config_uses_a_model_that_is_not_under_test():
+    with open("data/config.json", "r", encoding="utf-8") as f:
+        config = json.load(f)
+    think = config["agent"]["think"]
+    assert config["scoring"]["llm"]["model"] not in {think["llm"]["model"], think["llm_fast"]["model"]}

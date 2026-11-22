@@ -42,6 +42,8 @@
 ## 3. 两种运行模式
 
 - 自然相遇: `python start.py --name xxx --experiment params.json ...`,日志在 `results/checkpoints/xxx/events.jsonl`。
+  消息用 `--message seed.json` 播种:文件只有 `step`(第几步)、`source`(场外消息源)、`listener`(哪位居民)、`message`(原文)四项,
+  多出任何字段直接报错;到那一步时这位居民"听到"原文,走的是接力链第一跳同一段代码。
 - 接力链(受控传话,源消息 → A → B → C): `python relay.py --name xxx --spec relay.json --experiment params.json`,
   日志在 `results/relay/xxx/events.jsonl`。不需要地图和日程;存储、整合、反思与自然相遇共用
   `modules/memory_ops.py` 同一份代码。接力链里只要开了反思,每次听完就反思一次(自然相遇里仍按重要性累计触发)。
@@ -55,7 +57,8 @@ python score.py --events results/relay/xxx/events.jsonl --facts facts.json --out
 ```
 
 `score.py` 对日志里每条"说出的话 / 写入的记忆 / 取回的记忆 / 反思"逐条事实让评分模型判断是否保留,
-输出逐条判定和各环节保留率。仿真和接力链的输入里没有事实槽(接力链说明文件多出任何字段会直接报错),
+输出逐条判定和各环节保留率。评分模型在 `data/config.json` 的 `scoring.llm` 里配置,和被测模型相同时 `score.py` 拒绝运行。
+仿真和接力链的输入里没有事实槽(接力链说明文件多出任何字段会直接报错),
 所以事实槽不可能进入提示词或记忆。
 
 ## 5. 失败处理
