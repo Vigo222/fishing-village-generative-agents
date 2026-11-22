@@ -138,7 +138,10 @@ class SimulateServer:
         if listener not in self.game.agents:
             raise ValueError("seed message listener '{}' is not in the town".format(listener))
         conv_id = "seed|{}|{}".format(seed["source"], listener)
-        self.game.get_agent(listener).hear_message(seed["source"], seed["message"], conv_id, "scripted")
+        agent = self.game.get_agent(listener)
+        node = agent.hear_message(seed["source"], seed["message"], conv_id, "scripted")
+        # 和镇上听到的对话一样,计入触发反思的重要性累计
+        agent.status["poignancy"] += node.poignancy
         self.logger.info("[SEED] {} 把消息告诉了 {} @ step {}".format(seed["source"], listener, step))
 
     # ------------------------------------------------------------------
