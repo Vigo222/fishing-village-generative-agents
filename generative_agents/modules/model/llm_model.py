@@ -6,6 +6,8 @@ import re
 import requests
 from magentic import prompt
 
+from modules.measure.errors import LLMCallError
+
 
 def resolve_env(value):
     """配置值形如 ${VAR} 时从环境变量解析(API key 不入 git/存档)"""
@@ -36,12 +38,11 @@ class LLMModel:
         prompt,
         retry=10,
         callback=None,
-        failsafe=None,
         return_type=None,
         caller="llm_normal",
         **kwargs
     ):
-        response = None
+        response, last_error = None, "callback rejected the model output"
         self._summary.setdefault(caller, [0, 0, 0])
         for attempt in range(retry):
             try:
@@ -54,6 +55,7 @@ class LLMModel:
                     response = output
             except Exception as e:
                 msg = str(e)
+                last_error = msg
                 # 限流类错误(RPM/上游饱和/余额抖动)用更长的指数退避以等过限流窗口;
                 # 其余错误用较短退避。退避上限 60s。
                 rate_limited = any(
@@ -70,7 +72,10 @@ class LLMModel:
         pos = 2 if response is None else 1
         self._summary["total"][pos] += 1
         self._summary[caller][pos] += 1
-        return response or failsafe
+        if response is None:
+            # 重试耗尽:不返回任何替代值
+            raise LLMCallError(caller, self._model, retry, last_error)
+        return response
 
     def _completion(self, prompt, return_type, **kwargs):
         raise NotImplementedError(

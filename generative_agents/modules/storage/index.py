@@ -116,17 +116,18 @@ class LlamaIndex:
         node_ids=None,
         retriever_creator=None,
     ):
-        try:
-            retriever_creator = retriever_creator or VectorIndexRetriever
-            return retriever_creator(
-                self._index,
-                similarity_top_k=similarity_top_k,
-                filters=filters,
-                node_ids=node_ids,
-            ).retrieve(text)
-        except Exception as e:
-            # print(f"LlamaIndex.retrieve() caused an error: {e}")
+        # 没有可取回的记忆是正常情况;其余错误一律上抛,不吞成空结果
+        if node_ids is not None and len(node_ids) == 0:
             return []
+        if similarity_top_k < 1:
+            return []
+        retriever_creator = retriever_creator or VectorIndexRetriever
+        return retriever_creator(
+            self._index,
+            similarity_top_k=similarity_top_k,
+            filters=filters,
+            node_ids=node_ids,
+        ).retrieve(text)
 
     def query(
         self,

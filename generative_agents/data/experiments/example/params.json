@@ -1,0 +1,7 @@
+{
+    "summary_mode": "summary",
+    "summary_max_chars": 50,
+    "consolidate": true,
+    "reflect": false,
+    "chat_recall": "partner_only"
+}

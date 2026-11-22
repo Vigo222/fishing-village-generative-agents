@@ -8,6 +8,8 @@ import datetime
 from modules import memory, prompt, utils
 from modules.model.llm_model import create_llm_model
 from modules.memory.associate import Concept
+from modules.memory_ops import MemoryOps
+from modules.measure import ExperimentParams, get_event_log
 
 
 # 路由到快速档(deepseek-v4-flash)的机械调用:打分/查重/终止/等待判断
@@ -23,7 +25,7 @@ FAST_CALLERS = {
 }
 
 
-class Agent:
+class Agent(MemoryOps):
     def __init__(self, config, maze, conversation, logger):
         self.name = config["name"]
         self.maze = maze
@@ -36,6 +38,8 @@ class Agent:
         self.percept_config = config["percept"]
         self.think_config = config["think"]
         self.chat_iter = config["chat_iter"]
+        self.params = ExperimentParams.from_dict(config["experiment"])
+        self.conversation_id = None
 
         # memory
         self.spatial = memory.Spatial(**config["spatial"])
@@ -112,23 +116,6 @@ class Agent:
         if self._llm_fast is not None and func_hint in self.fast_callers:
             return self._llm_fast
         return self._llm
-
-    def completion(self, func_hint, *args, **kwargs):
-        assert hasattr(
-            self.scratch, "prompt_" + func_hint
-        ), "Can not find func prompt_{} from scratch".format(func_hint)
-        func = getattr(self.scratch, "prompt_" + func_hint)
-        res = func(*args, **kwargs)._asdict()
-        llm = self._route_llm(func_hint)
-        title, msg = "{}.{}".format(self.name, func_hint), {}
-        output = res["failsafe"]
-        if llm and llm.is_available():
-            self.logger.info("{} -> {} ({})".format(self.name, func_hint, llm._model))
-            output = llm.completion(caller=func_hint, **res)
-            msg = {"<PROMPT>": "\n" + res["prompt"] + "\n"}
-            msg.update({"response": output})
-        self.logger.debug(utils.block_msg(title, msg))
-        return output
 
     def think(self, status, agents):
         events = self.move(status["coord"], status.get("path"))
@@ -341,34 +328,7 @@ class Agent:
         if self.action.finished():
             self.action = self._determine_action()
 
-    # create action && object events
-    def make_event(self, subject, describe, address):
-        # emoji = self.completion("describe_emoji", describe)
-        # return self.completion(
-        #     "describe_event", subject, subject + describe, address, emoji
-        # )
-
-        e_describe = describe.replace("(", "").replace(")", "").replace("<", "").replace(">", "")
-        if e_describe.startswith(subject + "此时"):
-            e_describe = e_describe[len(subject + "此时"):]
-        if e_describe.startswith(subject):
-            e_describe = e_describe[len(subject):]
-        event = memory.Event(
-            subject, "此时", e_describe, describe=describe, address=address
-        )
-        return event
-
     def reflect(self):
-        def _add_thought(thought, evidence=None):
-            # event = self.completion(
-            #     "describe_event",
-            #     self.name,
-            #     thought,
-            #     address=self.get_tile().get_address(),
-            # )
-            event = self.make_event(self.name, thought, self.get_tile().get_address())
-            return self._add_concept("thought", event, filling=evidence)
-
         # 主实验开关:think.reflect=false 时屏蔽反思触发(对照组),其余机制不变
         if not self.think_config.get("reflect", True):
             return
@@ -394,23 +354,9 @@ class Agent:
         for r_nodes in retrieved.values():
             thoughts = self.completion("reflect_insights", r_nodes, 5)
             for thought, evidence in thoughts:
-                _add_thought(thought, evidence)
-        # summary chats
-        if self.chats:
-            recorded, evidence = set(), []
-            for name, _ in self.chats:
-                if name == self.name or name in recorded:
-                    continue
-                res = self.associate.retrieve_chats(name)
-                if res and len(res) > 0:
-                    node = res[-1]
-                    evidence.append(node.node_id)
-            thought = self.completion("reflect_chat_planing", self.chats)
-            _add_thought(f"对于 {self.name} 的计划：{thought}", evidence)
-            thought = self.completion("reflect_chat_memory", self.chats)
-            _add_thought(f"{self.name} {thought}", evidence)
+                self._add_thought(thought, evidence)
+        self._reflect_chats()
         self.status["poignancy"] = 0
-        self.chats = []
 
     def find_path(self, agents):
         address = self.get_event().address
@@ -554,6 +500,17 @@ class Agent:
 
         self.logger.info("{} decides chat with {}".format(self.name, other.name))
         start, chats = utils.get_timer().get_date(), []
+        conv_id = "{}|{}|{}".format(
+            utils.get_timer().get_date("%Y%m%d-%H:%M:%S"), self.name, other.name
+        )
+        self.conversation_id = other.conversation_id = conv_id
+
+        def _say(speaker, listener, text):
+            get_event_log().log(
+                "utterance", conversation_id=conv_id, turn=len(chats),
+                speaker=speaker.name, listener=listener.name, text=text, source="agent",
+            )
+            chats.append((speaker.name, text))
         relations = [
             self.completion("summarize_relation", self, other.name),
             other.completion("summarize_relation", other, self.name),
@@ -573,14 +530,14 @@ class Agent:
                     break
 
                 # 对于发起对话的Agent，从第2轮对话开始，检查话题是否结束
-                chats.append((self.name, text))
+                _say(self, other, text)
                 end = self.completion(
                     "decide_chat_terminate", self, other, chats
                 )
                 if end:
                     break
             else :
-                chats.append((self.name, text))
+                _say(self, other, text)
 
             text = other.completion(
                 "generate_chat", other, self, relations[1], chats
@@ -593,7 +550,7 @@ class Agent:
                 if end:
                     break
 
-            chats.append((other.name, text))
+            _say(other, self, text)
 
             # 对于响应对话的Agent，从第1轮开始，检查话题是否结束
             end = other.completion(
@@ -614,7 +571,7 @@ class Agent:
                 "\n  ".join(["{}: {}".format(n, c) for n, c in chats]),
             )
         )
-        chat_summary = self.completion("summarize_chats", chats)
+        chat_summary = self._chat_memory_text(chats)
         duration = int(sum([len(c[1]) for c in chats]) / 240)
         self.schedule_chat(
             chats, chat_summary, start, duration, other
@@ -647,7 +604,7 @@ class Agent:
         self.revise_schedule(event, start, duration)
 
     def schedule_chat(self, chats, chats_summary, start, duration, other, address=None):
-        self.chats.extend(chats)
+        self.chats.extend(self._readable_chats(chats, chats_summary, other.name))
         event = memory.Event(
             self.name,
             "对话",
@@ -658,91 +615,8 @@ class Agent:
         )
         self.revise_schedule(event, start, duration)
 
-    def _add_concept(
-        self,
-        e_type,
-        event,
-        create=None,
-        expire=None,
-        filling=None,
-    ):
-        if event.fit(None, "is", "idle"):
-            poignancy = 1
-        elif event.fit(None, "此时", "空闲"):
-            poignancy = 1
-        elif e_type == "chat":
-            poignancy = self.completion("poignancy_chat", event)
-        else:
-            poignancy = self.completion("poignancy_event", event)
-        self.logger.debug("{} add associate {}".format(self.name, event))
-
-        # 记忆整合(选题1):仅对配置范围内的类型(event/chat,绝不碰 thought)
-        cfg = self.associate.consolidate_config
-        # 物件状态事件(subject 即该 tile 上的对象,如"烹饪区/烧水炉/渔船泊位")是环境噪声,
-        # 不参与整合——只整合"人物/实体"相关记忆,避免物件状态churn与误判冲突
-        is_object_event = (
-            e_type == "event" and event.address and event.subject == event.address[-1]
-        )
-        if cfg.get("enabled") and e_type in cfg.get("scope", ["event"]) and not is_object_event:
-            consolidated = self._consolidate_memory(e_type, event, poignancy, create, expire, filling)
-            if consolidated is not None:
-                return consolidated
-
-        return self.associate.add_node(
-            e_type,
-            event,
-            poignancy,
-            create=create,
-            expire=expire,
-            filling=filling,
-        )
-
-    def _consolidate_memory(self, e_type, event, poignancy, create, expire, filling):
-        """整合判定与执行。返回 Concept(已处理)或 None(无候选→交回常规 ADD)"""
-        cfg = self.associate.consolidate_config
-        candidates = self.associate.consolidate_candidates(
-            event, e_type,
-            top_k=cfg.get("max_candidates", 4),
-            threshold=cfg.get("sim_threshold", 0.6),
-        )
-        if not candidates:
-            return None  # 无相似候选,不调 LLM,走常规 ADD(控成本)
-
-        verdict = self.completion("memory_consolidate", event, candidates)
-        action = str(verdict[0]).strip().upper()
-        try:
-            target = int(verdict[1])
-        except (ValueError, IndexError):
-            target = -1
-        reason = verdict[2] if len(verdict) > 2 else ""
-        old = candidates[target] if 0 <= target < len(candidates) else None
-
-        if action == "NOOP" and old is not None:
-            self.associate.log_consolidation("NOOP", old, old, reason)
-            self.logger.info("{} 记忆整合 NOOP(去重): {}".format(self.name, event.get_describe()))
-            return old  # 去重:不新增,返回命中的旧记忆
-
-        node = self.associate.add_node(
-            e_type, event, poignancy, create=create, expire=expire, filling=filling,
-            conflict_with=old.node_id if (action == "CONFLICT" and old) else None,
-        )
-        if action == "UPDATE" and old is not None:
-            # event:旧记忆过时、移出候选;chat:不 supersede(保护对话系统读的
-            # retrieve_chats / 60分钟搭话冷却),两条并存,仅靠 consolidation_log 记录更新
-            if e_type == "event":
-                self.associate.supersede(old.node_id, node.node_id)
-            self.associate.log_consolidation("UPDATE", node, old, reason)
-            self.logger.info("{} 记忆整合 UPDATE({}): '{}' → '{}'".format(
-                self.name, e_type, old.describe, node.describe))
-        elif action == "CONFLICT" and old is not None:
-            # 新节点已在 add_node 时写入 conflict_with=old.node_id(创建即持久);
-            # 反向标记靠 consolidation_log 记录冲突对(docstore 原地改 metadata 不可靠)
-            self.associate.log_consolidation("CONFLICT", node, old, reason)
-            self.logger.info("{} 记忆整合 CONFLICT: '{}' ⚔ '{}'".format(
-                self.name, old.describe, node.describe))
-        else:
-            self.associate.log_consolidation("ADD", node, None, reason)
-        return node
+    def current_address(self):
+        return self.get_tile().get_address()
 
     def get_tile(self):
         return self.maze.tile_at(self.coord)

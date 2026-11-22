@@ -1,0 +1,12 @@
+{
+    "start": "20250213-09:00",
+    "gap_minutes": 60,
+    "chain": ["甲", "乙", "丙"],
+    "source": "通知员",
+    "message": "下周三下午三点，图书馆二楼的自习室因为检修电路要关闭两个小时，原定在那里的读书会改到一楼报告厅。",
+    "agents": {
+        "甲": {"currently": "甲今天没有特别的安排。", "scratch": {"age": 20, "innate": "认真、话不多", "learned": "甲是一名学生。", "lifestyle": "作息规律。", "daily_plan": ""}},
+        "乙": {"currently": "乙今天没有特别的安排。", "scratch": {"age": 21, "innate": "热心、健谈", "learned": "乙是一名学生。", "lifestyle": "作息规律。", "daily_plan": ""}},
+        "丙": {"currently": "丙今天没有特别的安排。", "scratch": {"age": 22, "innate": "随和", "learned": "丙是一名学生。", "lifestyle": "作息规律。", "daily_plan": ""}}
+    }
+}

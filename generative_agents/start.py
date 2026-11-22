@@ -8,6 +8,7 @@ from dotenv import load_dotenv, find_dotenv
 
 from modules.game import create_game, get_game
 from modules import memory, utils
+from modules.measure import EventLog, ExperimentParams, set_event_log
 
 
 # 居民名单从 data/town.json 读取(裁剪小镇规模只改配置);文件缺失时回退到原版 25 人
@@ -304,6 +305,7 @@ parser.add_argument("--log", type=str, default="", help="Name of the log file")
 parser.add_argument("--agents", type=str, default="", help="Override personas, e.g. '伊莎贝拉,克劳斯' (test only)")
 parser.add_argument("--inject", type=str, default="", help="Hot-injection plan, e.g. '用户分身@12' or 'A@3,B@5'")
 parser.add_argument("--reflect", type=str, default="", choices=["", "on", "off"], help="Override reflection switch (main experiment variable); empty=use config")
+parser.add_argument("--experiment", type=str, default="", help="JSON file of memory-layer experiment parameters (see data/experiments/); empty=use data/config.json")
 parser.add_argument("--seed", type=int, default=None, help="Fix structural randomness for paired experiment reproducibility")
 parser.add_argument("--temp", type=float, default=None, help="Override LLM temperature for both tiers (experiment=0, demo=0.5)")
 args = parser.parse_args()
@@ -349,8 +351,20 @@ if __name__ == "__main__":
         random.seed(args.seed)
 
     # 主实验变量:--reflect on/off 覆盖 config 的 think.reflect(对照组屏蔽反思)
+    # 记忆层实验参数:默认取 data/config.json 的 agent.experiment,
+    # --experiment 指定的文件整体覆盖,--reflect 再单独覆盖反思开关
+    agent_base = sim_config["agent_base"]
+    if args.experiment:
+        with open(args.experiment, "r", encoding="utf-8") as f:
+            agent_base["experiment"] = json.load(f)
+    elif "experiment" not in agent_base:
+        # 旧存档里没有这一项
+        with open("data/config.json", "r", encoding="utf-8") as f:
+            agent_base["experiment"] = json.load(f)["agent"]["experiment"]
     if args.reflect:
-        sim_config.setdefault("agent_base", {}).setdefault("think", {})["reflect"] = (args.reflect == "on")
+        agent_base["experiment"]["reflect"] = (args.reflect == "on")
+    params = ExperimentParams.from_dict(agent_base["experiment"])
+    params.apply_to_agent_config(agent_base)
 
     # 采样温度覆盖:实验跑批 --temp 0,演示 --temp 0.5(覆盖旗舰与快速两档)
     if args.temp is not None:
@@ -361,5 +375,15 @@ if __name__ == "__main__":
 
     static_root = "frontend/static"
 
-    server = SimulateServer(name, static_root, checkpoints_folder, sim_config, start_step, args.verbose, args.log, inject_plan)
-    server.simulate(args.step, args.stride)
+    # 结构化事件日志:测量只读这个文件
+    os.makedirs(checkpoints_folder, exist_ok=True)
+    event_log = set_event_log(EventLog(f"{checkpoints_folder}/events.jsonl"))
+    try:
+        server = SimulateServer(name, static_root, checkpoints_folder, sim_config, start_step, args.verbose, args.log, inject_plan)
+        event_log.start_run(name, "natural", params.to_dict())
+        server.simulate(args.step, args.stride)
+    except BaseException as e:
+        # 任何中止(含模型调用失败)都把本次运行标为无效,然后照常报错退出
+        event_log.end_run(name, error="{}: {}".format(type(e).__name__, e))
+        raise
+    event_log.end_run(name)

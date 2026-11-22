@@ -143,7 +143,10 @@ class Associate:
         consolidate=None,
         consolidation_log=None,
         superseded=None,
+        recall_chats=False,
     ):
+        # 对话类记忆是否进入通用取回(实验参数 chat_recall)
+        self.recall_chats = recall_chats
         self._index = LlamaIndex(embedding, path)
         self.memory = memory or {"event": [], "thought": [], "chat": []}
         self.cleanup_index()
@@ -290,6 +293,8 @@ class Associate:
 
         retrieved = {}
         node_ids = self.memory["event"] + self.memory["thought"]
+        if self.recall_chats:
+            node_ids = node_ids + self.memory["chat"]
         for text in focus:
             nodes = self._index.retrieve(
                 text,
