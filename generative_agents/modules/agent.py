@@ -39,7 +39,8 @@ class Agent(MemoryOps):
         self.think_config = config["think"]
         self.chat_iter = config["chat_iter"]
         self.params = ExperimentParams.from_dict(config["experiment"])
-        self.conversation_id = None
+        # 存档里保留:对话刚开始就断点续跑时,稍后写入的对话记忆仍能对上这次对话
+        self.conversation_id = config.get("conversation_id")
 
         # memory
         self.spatial = memory.Spatial(**config["spatial"])
@@ -651,6 +652,7 @@ class Agent(MemoryOps):
             "schedule": self.schedule.to_dict(),
             "associate": self.associate.to_dict(),
             "chats": self.chats,
+            "conversation_id": self.conversation_id,
             "currently": self.scratch.currently,
         }
         if with_action:

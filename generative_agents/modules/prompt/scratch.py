@@ -584,19 +584,21 @@ class Scratch:
         nodes = agent.associate.retrieve_focus(focus, 15)
         memory = "\n- " + "\n- ".join([n.describe for n in nodes])
         chat_nodes = agent.associate.retrieve_chats(other.name)
-        get_event_log().log(
-            "memory_retrieve", conversation_id=agent.conversation_id, turn=len(chats),
-            agent=agent.name, listener=other.name,
-            node_ids=[n.node_id for n in nodes + chat_nodes],
-            texts=[n.describe for n in nodes + chat_nodes],
-        )
-        pass_context = ""
+        pass_context, used = "", list(nodes)
         for n in chat_nodes:
             delta = utils.get_timer().get_delta(n.create)
             if delta > 480:
                 continue
+            used.append(n)
             pass_context += f"{delta} 分钟前，{agent.name} 和 {other.name} 进行过对话。{n.describe}\n"
 
+        # 只记录真正放进提示词的记忆
+        get_event_log().log(
+            "memory_retrieve", conversation_id=agent.conversation_id, turn=len(chats),
+            agent=agent.name, listener=other.name,
+            node_ids=[n.node_id for n in used],
+            texts=[n.describe for n in used],
+        )
         address = agent.get_tile().get_address()
         if len(pass_context) > 0:
             prev_context = f'\n背景：\n"""\n{pass_context}"""\n\n'
@@ -698,7 +700,7 @@ class Scratch:
             res: str = Field(description="对话内容的简短摘要，一句话概括对话主题")
 
         def _callback(response):
-            return response.strip()
+            return response.strip() or None
 
 
         return Result(prompt, _callback, summarize_chatsResponse)

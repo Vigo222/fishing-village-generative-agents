@@ -361,6 +361,9 @@ if __name__ == "__main__":
         # 旧存档里没有这一项
         with open("data/config.json", "r", encoding="utf-8") as f:
             agent_base["experiment"] = json.load(f)["agent"]["experiment"]
+        # 反思/整合开关沿用存档里原来的值,续跑不改变实验条件
+        agent_base["experiment"]["reflect"] = agent_base["think"].get("reflect", True)
+        agent_base["experiment"]["consolidate"] = agent_base["associate"]["consolidate"]["enabled"]
     if args.reflect:
         agent_base["experiment"]["reflect"] = (args.reflect == "on")
     params = ExperimentParams.from_dict(agent_base["experiment"])
