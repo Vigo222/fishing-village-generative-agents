@@ -47,7 +47,7 @@ class MemoryOps:
 
     def hear_message(self, speaker, text, conversation_id, source):
         """听到一句话并存进记忆(接力链和自然相遇的播种共用);逐字原文只进事件日志。"""
-        self.conversation_id = conversation_id
+        previous_id, self.conversation_id = self.conversation_id, conversation_id
         get_event_log().log(
             "utterance", conversation_id=conversation_id, turn=0,
             speaker=speaker, listener=self.name, text=text, source=source,
@@ -55,8 +55,13 @@ class MemoryOps:
         chats = [(speaker, text)]
         stored = self._chat_memory_text(chats)
         event = memory.Event(self.name, "对话", speaker, describe=stored, address=self.current_address())
-        self._add_concept("chat", event)
+        try:
+            node = self._add_concept("chat", event)
+        finally:
+            # 之前那段对话的记忆可能还没存,它的编号不能被这句话顶掉
+            self.conversation_id = previous_id
         self.chats.extend(self._readable_chats(chats, stored, speaker))
+        return node
 
     def _add_thought(self, thought, evidence=None):
         event = self.make_event(self.name, thought, self.current_address())
