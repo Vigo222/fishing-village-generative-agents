@@ -89,7 +89,7 @@
 		// Load tilemap JSON
 		this.load.tilemapTiledJSON("map", "static/assets/village/tilemap/tilemap.json");
 
-		this.load.atlas("atlas", "static/assets/village/agents/伊莎贝拉/texture.png", filename="static/assets/village/agents/sprite.json");
+		this.load.atlas("atlas", "static/assets/village/agents/赵秀兰/texture.png", filename="static/assets/village/agents/sprite.json");
 
 		// Load persona atlases
 		for (var p in persona_names) {
@@ -197,7 +197,7 @@
 		textConversation = add_text(this, 20, posY + currentTime.height + 10, " —— ", "#ccffcc");
 
 		// Setup camera
-		player = this.physics.add.sprite(2440, 500, "atlas", "down").setSize(30, 40).setOffset(0, 0);
+		player = this.physics.add.sprite(map.widthInPixels / 2, map.heightInPixels / 2, "atlas", "down").setSize(30, 40).setOffset(0, 0);
 		player.setDepth(-1);
 		const camera = this.cameras.main;
 		camera.startFollow(player);
