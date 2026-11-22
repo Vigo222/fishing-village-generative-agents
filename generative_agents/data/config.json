@@ -1,5 +1,12 @@
 {
     "agent": {
+        "experiment": {
+            "summary_mode": "summary",
+            "summary_max_chars": 100,
+            "consolidate": true,
+            "reflect": true,
+            "chat_recall": "partner_only"
+        },
         "percept": {
             "mode": "box",
             "vision_r": 8,
