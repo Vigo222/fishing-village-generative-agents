@@ -368,7 +368,7 @@ def build_map(residents):
     m.stamp("fridge", ix, iy - 2)
     m.stamp("utensils", ix + 2, iy - 2)
     m.stamp("cooktop", ix + 4, iy - 2, ["早点铺", "店堂", "蒸笼灶台"])
-    m.counter(ix, iy + 1, 7, ["早点铺", "店堂", "早点铺柜台"])
+    m.counter(ix, iy + 1, 4, ["早点铺", "店堂", "早点铺柜台"])
     for dx in (0, 4):
         m.stamp("table", ix + dx, iy + 3, ["早点铺", "店堂", "早点铺桌椅"])
     m.stamp("table", ix + 7, iy + 4, ["早点铺", "店堂", "早点铺桌椅"])
